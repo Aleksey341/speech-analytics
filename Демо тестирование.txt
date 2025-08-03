@@ -1,0 +1,478 @@
+"""
+Демонстрационный скрипт для тестирования системы речевой аналитики
+Включает примеры использования API, генерацию тестовых данных и бенчмарки
+"""
+
+import requests
+import json
+import time
+import os
+import wave
+import numpy as np
+import random
+from datetime import datetime
+import matplotlib.pyplot as plt
+import seaborn as sns
+from typing import Dict, List, Any
+
+class SpeechAnalyticsDemo:
+    def __init__(self, base_url: str = "http://localhost:5000"):
+        self.base_url = base_url
+        self.session = requests.Session()
+        self.test_results = []
+        
+    def check_server_health(self) -> bool:
+        """Проверка доступности сервера"""
+        try:
+            response = self.session.get(f"{self.base_url}/health", timeout=5)
+            if response.status_code == 200:
+                health_data = response.json()
+                print("✅ Сервер доступен")
+                print(f"   Status: {health_data.get('status')}")
+                print(f"   Timestamp: {health_data.get('timestamp')}")
+                print(f"   Microphone: {health_data.get('microphone_available')}")
+                return True
+            else:
+                print(f"❌ Сервер вернул код {response.status_code}")
+                return False
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Ошибка подключения к серверу: {e}")
+            return False
+    
+    def generate_test_audio(self, filename: str, duration: float = 5.0, sample_rate: int = 44100):
+        """Генерация тестового аудиофайла"""
+        # Создаем синтетический звук (синусоида с шумом)
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        
+        # Основная частота с гармониками (имитация голоса)
+        frequency = 200  # Базовая частота
+        signal = (
+            np.sin(2 * np.pi * frequency * t) * 0.3 +
+            np.sin(2 * np.pi * frequency * 2 * t) * 0.2 +
+            np.sin(2 * np.pi * frequency * 3 * t) * 0.1 +
+            np.random.normal(0, 0.1, len(t))  # Шум
+        )
+        
+        # Нормализация
+        signal = np.clip(signal, -1, 1)
+        signal = (signal * 32767).astype(np.int16)
+        
+        # Сохранение WAV файла
+        with wave.open(filename, 'w') as wav_file:
+            wav_file.setnchannels(1)  # Моно
+            wav_file.setsampwidth(2)  # 16 бит
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(signal.tobytes())
+        
+        print(f"📁 Создан тестовый аудиофайл: {filename}")
+    
+    def test_text_analysis(self) -> Dict[str, Any]:
+        """Тестирование анализа текста"""
+        print("\n🔍 Тестирование анализа текста...")
+        
+        test_texts = [
+            {
+                "name": "Позитивный отзыв",
+                "text": "Добро пожаловать! Спасибо за обращение в нашу компанию. Мы очень рады помочь вам с вашим вопросом. Наши услуги отличного качества, и мы гарантируем полное удовлетворение ваших потребностей."
+            },
+            {
+                "name": "Негативная жалоба",
+                "text": "Это просто ужасно! Ваш сервис не работает, я крайне недоволен качеством обслуживания. Потратил кучу времени впустую, это настоящая проблема!"
+            },
+            {
+                "name": "Нейтральный запрос",
+                "text": "Здравствуйте. Хотел бы уточнить информацию о ваших услугах. Какие варианты доставки у вас доступны? Меня интересует стоимость и сроки."
+            },
+            {
+                "name": "Диалог оператора с клиентом",
+                "text": """Оператор: Добрый день! Меня зовут Анна, чем могу помочь?
+Клиент: Здравствуйте! У меня вопрос по поводу заказа.
+Оператор: Конечно, давайте разберемся. Назовите, пожалуйста, номер заказа.
+Клиент: Номер 12345. Когда будет доставка?
+Оператор: Проверяю... Ваш заказ будет доставлен завтра до 18:00."""
+            }
+        ]
+        
+        results = []
+        
+        for test_case in test_texts:
+            print(f"\n  📝 Тестируем: {test_case['name']}")
+            
+            try:
+                start_time = time.time()
+                
+                response = self.session.post(
+                    f"{self.base_url}/analyze/text",
+                    json={"text": test_case["text"]},
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                end_time = time.time()
+                processing_time = end_time - start_time
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if result["success"]:
+                        analysis = result["results"]
+                        
+                        print(f"     ⏱️  Время обработки: {processing_time:.2f}с")
+                        print(f"     😊 Эмоция: {analysis['sentiment']['sentiment']}")
+                        print(f"     📊 Оценка: {analysis['sentiment']['score']:.2f}")
+                        print(f"     🎯 Качество: {analysis['quality']['score']:.1f}%")
+                        print(f"     🔑 Ключевые слова: {', '.join(analysis['keywords'][:5])}")
+                        
+                        results.append({
+                            "name": test_case["name"],
+                            "processing_time": processing_time,
+                            "sentiment": analysis["sentiment"]["sentiment"],
+                            "sentiment_score": analysis["sentiment"]["score"],
+                            "quality_score": analysis["quality"]["score"],
+                            "keywords_count": len(analysis["keywords"])
+                        })
+                    else:
+                        print(f"     ❌ Ошибка анализа: {result.get('error', 'Unknown error')}")
+                else:
+                    print(f"     ❌ HTTP Error: {response.status_code}")
+                    
+            except Exception as e:
+                print(f"     ❌ Исключение: {e}")
+        
+        return {"test_results": results, "total_tests": len(test_texts)}
+    
+    def test_audio_analysis(self) -> Dict[str, Any]:
+        """Тестирование анализа аудио"""
+        print("\n🎵 Тестирование анализа аудио...")
+        
+        # Создаем тестовые аудиофайлы
+        test_files = []
+        for i, duration in enumerate([3, 5, 10]):
+            filename = f"test_audio_{i+1}_{duration}s.wav"
+            self.generate_test_audio(filename, duration)
+            test_files.append({"filename": filename, "duration": duration})
+        
+        results = []
+        
+        for test_file in test_files:
+            print(f"\n  🎧 Тестируем файл: {test_file['filename']}")
+            
+            try:
+                start_time = time.time()
+                
+                with open(test_file["filename"], "rb") as audio_file:
+                    files = {"audio": audio_file}
+                    response = self.session.post(
+                        f"{self.base_url}/analyze",
+                        files=files
+                    )
+                
+                end_time = time.time()
+                processing_time = end_time - start_time
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if result["success"]:
+                        analysis = result["results"]
+                        
+                        print(f"     ⏱️  Время обработки: {processing_time:.2f}с")
+                        print(f"     📝 Транскрипция: {analysis['transcript'][:50]}...")
+                        print(f"     😊 Эмоция: {analysis['sentiment']['sentiment']}")
+                        print(f"     🎯 Качество: {analysis['quality']['score']:.1f}%")
+                        print(f"     👥 Говорящих: {len(analysis['speakers'])}")
+                        
+                        results.append({
+                            "filename": test_file["filename"],
+                            "duration": test_file["duration"],
+                            "processing_time": processing_time,
+                            "transcript_length": len(analysis["transcript"]),
+                            "quality_score": analysis["quality"]["score"],
+                            "speakers_count": len(analysis["speakers"])
+                        })
+                    else:
+                        print(f"     ❌ Ошибка анализа: {result.get('error', 'Unknown error')}")
+                else:
+                    print(f"     ❌ HTTP Error: {response.status_code}")
+                    
+            except Exception as e:
+                print(f"     ❌ Исключение: {e}")
+            finally:
+                # Удаляем тестовый файл
+                try:
+                    os.remove(test_file["filename"])
+                except:
+                    pass
+        
+        return {"test_results": results, "total_tests": len(test_files)}
+    
+    def benchmark_performance(self, iterations: int = 10) -> Dict[str, Any]:
+        """Бенчмарк производительности"""
+        print(f"\n📊 Запуск бенчмарка производительности ({iterations} итераций)...")
+        
+        test_text = """Добро пожаловать в нашу компанию! 
+        Меня зовут Анна, я представитель службы поддержки. 
+        Чем могу помочь вам сегодня? У нас есть множество услуг, 
+        и я с радостью проконсультирую вас по любым вопросам."""
+        
+        times = []
+        successful_requests = 0
+        
+        for i in range(iterations):
+            print(f"  Итерация {i+1}/{iterations}", end=" ")
+            
+            try:
+                start_time = time.time()
+                
+                response = self.session.post(
+                    f"{self.base_url}/analyze/text",
+                    json={"text": test_text},
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                end_time = time.time()
+                processing_time = end_time - start_time
+                
+                if response.status_code == 200 and response.json().get("success"):
+                    times.append(processing_time)
+                    successful_requests += 1
+                    print(f"✅ {processing_time:.2f}с")
+                else:
+                    print("❌ Ошибка")
+                    
+            except Exception as e:
+                print(f"❌ {e}")
+        
+        if times:
+            avg_time = np.mean(times)
+            min_time = np.min(times)
+            max_time = np.max(times)
+            std_time = np.std(times)
+            
+            print(f"\n📈 Результаты бенчмарка:")
+            print(f"   Успешных запросов: {successful_requests}/{iterations}")
+            print(f"   Среднее время: {avg_time:.2f}с")
+            print(f"   Минимальное время: {min_time:.2f}с")
+            print(f"   Максимальное время: {max_time:.2f}с")
+            print(f"   Стандартное отклонение: {std_time:.2f}с")
+            print(f"   Запросов в секунду: {1/avg_time:.1f}")
+            
+            return {
+                "successful_requests": successful_requests,
+                "total_requests": iterations,
+                "success_rate": successful_requests / iterations * 100,
+                "avg_time": avg_time,
+                "min_time": min_time,
+                "max_time": max_time,
+                "std_time": std_time,
+                "requests_per_second": 1/avg_time,
+                "all_times": times
+            }
+        else:
+            print("❌ Нет успешных запросов для анализа")
+            return {"error": "No successful requests"}
+    
+    def test_export_functionality(self):
+        """Тестирование функции экспорта отчетов"""
+        print("\n📊 Тестирование экспорта отчетов...")
+        
+        # Сначала создаем результат анализа
+        test_text = "Здравствуйте! Спасибо за отличный сервис. Очень доволен качеством обслуживания."
+        
+        response = self.session.post(
+            f"{self.base_url}/analyze/text",
+            json={"text": test_text},
+            headers={"Content-Type": "application/json"}
+        )
+        
+        if response.status_code == 200 and response.json().get("success"):
+            analysis_results = response.json()["results"]
+            
+            # Тестируем экспорт в JSON
+            export_response = self.session.post(
+                f"{self.base_url}/export/report",
+                json={"results": analysis_results, "format": "json"},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if export_response.status_code == 200:
+                print("  ✅ Экспорт в JSON успешен")
+            else:
+                print("  ❌ Ошибка экспорта в JSON")
+            
+            # Тестируем экспорт в TXT
+            export_response = self.session.post(
+                f"{self.base_url}/export/report",
+                json={"results": analysis_results, "format": "txt"},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if export_response.status_code == 200:
+                print("  ✅ Экспорт в TXT успешен")
+                # Сохраняем отчет в файл
+                report_data = export_response.json()
+                with open("sample_report.txt", "w", encoding="utf-8") as f:
+                    f.write(report_data["report"])
+                print("  📄 Отчет сохранен в sample_report.txt")
+            else:
+                print("  ❌ Ошибка экспорта в TXT")
+        else:
+            print("  ❌ Не удалось создать результат анализа для тестирования экспорта")
+    
+    def create_performance_visualization(self, benchmark_results: Dict[str, Any]):
+        """Создание графиков производительности"""
+        if "all_times" not in benchmark_results:
+            print("❌ Нет данных для визуализации")
+            return
+        
+        print("\n📈 Создание графиков производительности...")
+        
+        times = benchmark_results["all_times"]
+        
+        # Создаем фигуру с подграфиками
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle('Анализ производительности Speech Analytics API', fontsize=16)
+        
+        # График 1: Время выполнения по итерациям
+        ax1.plot(range(1, len(times) + 1), times, 'b-o', markersize=4)
+        ax1.set_title('Время выполнения по итерациям')
+        ax1.set_xlabel('Итерация')
+        ax1.set_ylabel('Время (секунды)')
+        ax1.grid(True, alpha=0.3)
+        ax1.axhline(y=np.mean(times), color='r', linestyle='--', label=f'Среднее: {np.mean(times):.2f}с')
+        ax1.legend()
+        
+        # График 2: Гистограмма времени выполнения
+        ax2.hist(times, bins=10, alpha=0.7, color='skyblue', edgecolor='black')
+        ax2.set_title('Распределение времени выполнения')
+        ax2.set_xlabel('Время (секунды)')
+        ax2.set_ylabel('Количество')
+        ax2.grid(True, alpha=0.3)
+        
+        # График 3: Box plot
+        ax3.boxplot(times)
+        ax3.set_title('Box Plot времени выполнения')
+        ax3.set_ylabel('Время (секунды)')
+        ax3.grid(True, alpha=0.3)
+        
+        # График 4: Статистики
+        stats_data = [
+            ['Среднее время', f"{benchmark_results['avg_time']:.2f}с"],
+            ['Минимальное время', f"{benchmark_results['min_time']:.2f}с"],
+            ['Максимальное время', f"{benchmark_results['max_time']:.2f}с"],
+            ['Стандартное отклонение', f"{benchmark_results['std_time']:.2f}с"],
+            ['Запросов/сек', f"{benchmark_results['requests_per_second']:.1f}"],
+            ['Успешность', f"{benchmark_results['success_rate']:.1f}%"]
+        ]
+        
+        ax4.axis('tight')
+        ax4.axis('off')
+        table = ax4.table(cellText=stats_data, 
+                         colLabels=['Метрика', 'Значение'],
+                         cellLoc='center',
+                         loc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.2, 1.5)
+        ax4.set_title('Статистики производительности')
+        
+        plt.tight_layout()
+        
+        # Сохраняем график
+        plt.savefig('performance_analysis.png', dpi=300, bbox_inches='tight')
+        print("  📊 График сохранен как performance_analysis.png")
+        
+        # Показываем график (если возможно)
+        try:
+            plt.show()
+        except:
+            print("  ℹ️  График создан, но не может быть отображен в текущем окружении")
+    
+    def run_full_demo(self):
+        """Запуск полной демонстрации системы"""
+        print("🚀 Запуск полной демонстрации Speech Analytics System")
+        print("=" * 60)
+        
+        # Проверка доступности сервера
+        if not self.check_server_health():
+            print("❌ Сервер недоступен. Убедитесь, что сервер запущен.")
+            return
+        
+        # Сбор всех результатов тестов
+        all_results = {
+            "timestamp": datetime.now().isoformat(),
+            "tests": {}
+        }
+        
+        # Тестирование анализа текста
+        text_results = self.test_text_analysis()
+        all_results["tests"]["text_analysis"] = text_results
+        
+        # Тестирование анализа аудио
+        audio_results = self.test_audio_analysis()
+        all_results["tests"]["audio_analysis"] = audio_results
+        
+        # Тестирование экспорта
+        self.test_export_functionality()
+        
+        # Бенчмарк производительности
+        benchmark_results = self.benchmark_performance(iterations=20)
+        all_results["tests"]["performance"] = benchmark_results
+        
+        # Создание визуализации
+        if "error" not in benchmark_results:
+            self.create_performance_visualization(benchmark_results)
+        
+        # Сохранение результатов
+        with open("demo_results.json", "w", encoding="utf-8") as f:
+            json.dump(all_results, f, ensure_ascii=False, indent=2)
+        
+        print("\n" + "=" * 60)
+        print("🎉 Демонстрация завершена!")
+        print(f"📊 Результаты сохранены в demo_results.json")
+        print(f"📈 График производительности: performance_analysis.png")
+        print(f"📄 Пример отчета: sample_report.txt")
+        print("\n🔍 Краткая сводка:")
+        
+        if "text_analysis" in all_results["tests"]:
+            text_results = all_results["tests"]["text_analysis"]
+            print(f"   📝 Протестировано текстов: {text_results['total_tests']}")
+        
+        if "audio_analysis" in all_results["tests"]:
+            audio_results = all_results["tests"]["audio_analysis"]
+            print(f"   🎵 Протестировано аудио: {audio_results['total_tests']}")
+        
+        if "performance" in all_results["tests"] and "error" not in benchmark_results:
+            perf = all_results["tests"]["performance"]
+            print(f"   ⚡ Среднее время ответа: {perf['avg_time']:.2f}с")
+            print(f"   📊 Успешность запросов: {perf['success_rate']:.1f}%")
+
+def main():
+    """Главная функция для запуска демо"""
+    print("🎙️ Speech Analytics System - Демонстрация и тестирование")
+    print("Автор: AI Assistant")
+    print("Версия: 1.0")
+    print()
+    
+    # Проверяем аргументы командной строки
+    import sys
+    
+    base_url = "http://localhost:5000"
+    if len(sys.argv) > 1:
+        base_url = sys.argv[1]
+    
+    print(f"🌐 Используемый сервер: {base_url}")
+    print()
+    
+    # Создаем экземпляр демо
+    demo = SpeechAnalyticsDemo(base_url)
+    
+    # Запускаем демонстрацию
+    try:
+        demo.run_full_demo()
+    except KeyboardInterrupt:
+        print("\n⏹️  Демонстрация прервана пользователем")
+    except Exception as e:
+        print(f"\n❌ Ошибка во время демонстрации: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()

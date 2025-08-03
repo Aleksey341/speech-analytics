@@ -1,0 +1,785 @@
+#!/usr/bin/env python3
+"""
+Автоматизированный скрипт развертывания системы речевой аналитики
+Выполняет полную установку, настройку и запуск системы
+"""
+
+import os
+import sys
+import subprocess
+import json
+import shutil
+import platform
+import argparse
+from pathlib import Path
+from typing import Dict, List, Optional
+import requests
+import time
+import psutil
+
+class Colors:
+    """ANSI цвета для консольного вывода"""
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+class SpeechAnalyticsDeployer:
+    """Класс для автоматизированного развертывания системы"""
+    
+    def __init__(self, config_path: Optional[str] = None):
+        self.config_path = config_path or "deployment_config.json"
+        self.project_root = Path.cwd()
+        self.venv_path = self.project_root / "venv"
+        self.config = self.load_config()
+        
+    def load_config(self) -> Dict:
+        """Загрузка конфигурации развертывания"""
+        default_config = {
+            "system": {
+                "python_version": "3.9",
+                "project_name": "speech-analytics",
+                "environment": "development",  # development, production
+                "port": 5000,
+                "host": "0.0.0.0"
+            },
+            "database": {
+                "type": "sqlite",  # sqlite, postgresql, mysql
+                "name": "speech_analytics.db",
+                "host": "localhost",
+                "port": 5432,
+                "username": "",
+                "password": ""
+            },
+            "redis": {
+                "enabled": True,
+                "host": "localhost",
+                "port": 6379,
+                "password": ""
+            },
+            "nginx": {
+                "enabled": True,
+                "domain": "localhost",
+                "ssl": False
+            },
+            "integrations": {
+                "crm": {"enabled": False},
+                "telephony": {"enabled": False},
+                "messenger": {"enabled": False},
+                "cloud_storage": {"enabled": False}
+            },
+            "monitoring": {
+                "enabled": True,
+                "log_level": "INFO"
+            }
+        }
+        
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    user_config = json.load(f)
+                    # Объединяем с default_config
+                    default_config.update(user_config)
+            except Exception as e:
+                self.print_error(f"Ошибка загрузки конфигурации: {e}")
+                self.print_info("Используется конфигурация по умолчанию")
+        
+        return default_config
+    
+    def save_config(self):
+        """Сохранение конфигурации"""
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, indent=2, ensure_ascii=False)
+    
+    def print_header(self, text: str):
+        """Вывод заголовка"""
+        print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*60}{Colors.ENDC}")
+        print(f"{Colors.HEADER}{Colors.BOLD}{text.center(60)}{Colors.ENDC}")
+        print(f"{Colors.HEADER}{Colors.BOLD}{'='*60}{Colors.ENDC}")
+    
+    def print_success(self, text: str):
+        """Вывод сообщения об успехе"""
+        print(f"{Colors.OKGREEN}✅ {text}{Colors.ENDC}")
+    
+    def print_info(self, text: str):
+        """Вывод информационного сообщения"""
+        print(f"{Colors.OKBLUE}ℹ️  {text}{Colors.ENDC}")
+    
+    def print_warning(self, text: str):
+        """Вывод предупреждения"""
+        print(f"{Colors.WARNING}⚠️  {text}{Colors.ENDC}")
+    
+    def print_error(self, text: str):
+        """Вывод ошибки"""
+        print(f"{Colors.FAIL}❌ {text}{Colors.ENDC}")
+    
+    def run_command(self, command: str, check: bool = True, shell: bool = True) -> subprocess.CompletedProcess:
+        """Выполнение команды в терминале"""
+        self.print_info(f"Выполняем: {command}")
+        try:
+            result = subprocess.run(
+                command, 
+                shell=shell, 
+                check=check, 
+                capture_output=True, 
+                text=True
+            )
+            if result.stdout:
+                print(result.stdout)
+            return result
+        except subprocess.CalledProcessError as e:
+            self.print_error(f"Ошибка выполнения команды: {e}")
+            if e.stderr:
+                print(e.stderr)
+            raise
+    
+    def check_system_requirements(self):
+        """Проверка системных требований"""
+        self.print_header("ПРОВЕРКА СИСТЕМНЫХ ТРЕБОВАНИЙ")
+        
+        # Проверка операционной системы
+        os_name = platform.system()
+        self.print_info(f"Операционная система: {os_name} {platform.release()}")
+        
+        if os_name not in ['Linux', 'Darwin', 'Windows']:
+            self.print_warning(f"Неподдерживаемая ОС: {os_name}")
+        
+        # Проверка Python
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        self.print_info(f"Версия Python: {python_version}")
+        
+        required_version = self.config['system']['python_version']
+        if python_version < required_version:
+            self.print_error(f"Требуется Python {required_version} или выше")
+            sys.exit(1)
+        
+        # Проверка доступной памяти
+        memory = psutil.virtual_memory()
+        memory_gb = memory.total / (1024**3)
+        self.print_info(f"Доступная память: {memory_gb:.1f} GB")
+        
+        if memory_gb < 2:
+            self.print_warning("Рекомендуется минимум 2 GB RAM")
+        
+        # Проверка свободного места на диске
+        disk = psutil.disk_usage('/')
+        free_gb = disk.free / (1024**3)
+        self.print_info(f"Свободное место: {free_gb:.1f} GB")
+        
+        if free_gb < 5:
+            self.print_warning("Рекомендуется минимум 5 GB свободного места")
+        
+        self.print_success("Проверка системных требований завершена")
+    
+    def setup_python_environment(self):
+        """Настройка Python окружения"""
+        self.print_header("НАСТРОЙКА PYTHON ОКРУЖЕНИЯ")
+        
+        # Создание виртуального окружения
+        if not self.venv_path.exists():
+            self.print_info("Создание виртуального окружения...")
+            self.run_command(f"python -m venv {self.venv_path}")
+            self.print_success("Виртуальное окружение создано")
+        else:
+            self.print_info("Виртуальное окружение уже существует")
+        
+        # Активация виртуального окружения и установка зависимостей
+        if platform.system() == "Windows":
+            pip_path = self.venv_path / "Scripts" / "pip"
+            python_path = self.venv_path / "Scripts" / "python"
+        else:
+            pip_path = self.venv_path / "bin" / "pip"
+            python_path = self.venv_path / "bin" / "python"
+        
+        # Обновление pip
+        self.print_info("Обновление pip...")
+        self.run_command(f"{python_path} -m pip install --upgrade pip")
+        
+        # Создание requirements.txt если не существует
+        requirements_path = self.project_root / "requirements.txt"
+        if not requirements_path.exists():
+            self.create_requirements_file()
+        
+        # Установка зависимостей
+        self.print_info("Установка зависимостей Python...")
+        self.run_command(f"{pip_path} install -r requirements.txt")
+        
+        # Дополнительные зависимости для production
+        if self.config['system']['environment'] == 'production':
+            self.print_info("Установка production зависимостей...")
+            self.run_command(f"{pip_path} install gunicorn supervisor")
+        
+        self.print_success("Python окружение настроено")
+    
+    def create_requirements_file(self):
+        """Создание файла requirements.txt"""
+        requirements = [
+            "Flask==2.3.3",
+            "Flask-CORS==4.0.0",
+            "Flask-SQLAlchemy==3.0.5",
+            "Flask-Migrate==4.0.5",
+            "SpeechRecognition==3.10.0",
+            "librosa==0.10.1",
+            "numpy==1.24.3",
+            "scipy==1.11.1",
+            "textblob==0.17.1",
+            "nltk==3.8.1",
+            "PyAudio==0.2.11",
+            "scikit-learn==1.3.0",
+            "pandas==2.0.3",
+            "matplotlib==3.7.2",
+            "seaborn==0.12.2",
+            "requests==2.31.0",
+            "aiohttp==3.8.5",
+            "redis==4.6.0",
+            "psycopg2-binary==2.9.7",
+            "python-dateutil==2.8.2",
+            "python-dotenv==1.0.0",
+            "celery==5.3.1",
+            "boto3==1.28.25"
+        ]
+        
+        with open("requirements.txt", "w") as f:
+            f.write("\n".join(requirements))
+        
+        self.print_success("Файл requirements.txt создан")
+    
+    def setup_database(self):
+        """Настройка базы данных"""
+        self.print_header("НАСТРОЙКА БАЗЫ ДАННЫХ")
+        
+        db_config = self.config['database']
+        db_type = db_config['type']
+        
+        if db_type == 'sqlite':
+            self.setup_sqlite()
+        elif db_type == 'postgresql':
+            self.setup_postgresql()
+        elif db_type == 'mysql':
+            self.setup_mysql()
+        
+        self.print_success("База данных настроена")
+    
+    def setup_sqlite(self):
+        """Настройка SQLite"""
+        self.print_info("Используется SQLite база данных")
+        db_path = self.project_root / self.config['database']['name']
+        
+        # SQLite не требует дополнительной настройки
+        self.print_info(f"База данных будет создана по пути: {db_path}")
+    
+    def setup_postgresql(self):
+        """Настройка PostgreSQL"""
+        self.print_info("Настройка PostgreSQL...")
+        
+        db_config = self.config['database']
+        
+        # Проверка доступности PostgreSQL
+        try:
+            import psycopg2
+            conn = psycopg2.connect(
+                host=db_config['host'],
+                port=db_config['port'],
+                user=db_config['username'],
+                password=db_config['password'],
+                database='postgres'  # подключаемся к системной БД
+            )
+            
+            # Создание базы данных если не существует
+            conn.autocommit = True
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT 1 FROM pg_database WHERE datname = '{db_config['name']}'")
+            
+            if not cursor.fetchone():
+                cursor.execute(f"CREATE DATABASE {db_config['name']}")
+                self.print_success(f"База данных {db_config['name']} создана")
+            else:
+                self.print_info(f"База данных {db_config['name']} уже существует")
+            
+            cursor.close()
+            conn.close()
+            
+        except ImportError:
+            self.print_error("psycopg2 не установлен")
+        except Exception as e:
+            self.print_error(f"Ошибка подключения к PostgreSQL: {e}")
+    
+    def setup_mysql(self):
+        """Настройка MySQL"""
+        self.print_info("Настройка MySQL...")
+        # Аналогично PostgreSQL
+        self.print_info("MySQL настройка пропущена (требует реализации)")
+    
+    def setup_redis(self):
+        """Настройка Redis"""
+        if not self.config['redis']['enabled']:
+            return
+        
+        self.print_header("НАСТРОЙКА REDIS")
+        
+        # Проверка доступности Redis
+        try:
+            import redis
+            r = redis.Redis(
+                host=self.config['redis']['host'],
+                port=self.config['redis']['port'],
+                password=self.config['redis']['password'] or None
+            )
+            r.ping()
+            self.print_success("Redis доступен")
+        except ImportError:
+            self.print_warning("Redis модуль не установлен")
+        except Exception as e:
+            self.print_warning(f"Redis недоступен: {e}")
+    
+    def create_project_structure(self):
+        """Создание структуры проекта"""
+        self.print_header("СОЗДАНИЕ СТРУКТУРЫ ПРОЕКТА")
+        
+        directories = [
+            "app",
+            "app/templates",
+            "app/static",
+            "app/static/css",
+            "app/static/js",
+            "app/static/images",
+            "config",
+            "logs",
+            "uploads",
+            "uploads/audio",
+            "uploads/reports",
+            "data",
+            "tests",
+            "scripts",
+            "docs"
+        ]
+        
+        for directory in directories:
+            dir_path = self.project_root / directory
+            dir_path.mkdir(exist_ok=True, parents=True)
+            self.print_info(f"Создана директория: {directory}")
+        
+        # Создание основных файлов
+        self.create_main_files()
+        
+        self.print_success("Структура проекта создана")
+    
+    def create_main_files(self):
+        """Создание основных файлов проекта"""
+        # .env файл
+        env_content = f"""
+# Основные настройки
+FLASK_APP=app
+FLASK_ENV={self.config['system']['environment']}
+SECRET_KEY=your-secret-key-change-in-production
+
+# База данных
+DATABASE_URL={self.get_database_url()}
+
+# Redis
+REDIS_URL=redis://{self.config['redis']['host']}:{self.config['redis']['port']}
+
+# Интеграции
+CRM_API_KEY=your-crm-api-key
+TELEPHONY_API_KEY=your-telephony-api-key
+CLOUD_STORAGE_KEY=your-cloud-storage-key
+
+# Мониторинг
+LOG_LEVEL={self.config['monitoring']['log_level']}
+        """.strip()
+        
+        with open(".env", "w") as f:
+            f.write(env_content)
+        
+        # .gitignore
+        gitignore_content = """
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+logs/
+uploads/
+*.db
+config/local_settings.py
+.env
+        """.strip()
+        
+        with open(".gitignore", "w") as f:
+            f.write(gitignore_content)
+        
+        self.print_info("Созданы файлы .env и .gitignore")
+    
+    def get_database_url(self) -> str:
+        """Генерация URL базы данных"""
+        db_config = self.config['database']
+        
+        if db_config['type'] == 'sqlite':
+            return f"sqlite:///{db_config['name']}"
+        elif db_config['type'] == 'postgresql':
+            return f"postgresql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['name']}"
+        elif db_config['type'] == 'mysql':
+            return f"mysql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['name']}"
+        
+        return ""
+    
+    def setup_nginx(self):
+        """Настройка Nginx"""
+        if not self.config['nginx']['enabled']:
+            return
+        
+        self.print_header("НАСТРОЙКА NGINX")
+        
+        nginx_config = f"""
+server {{
+    listen 80;
+    server_name {self.config['nginx']['domain']};
+    
+    client_max_body_size 50M;
+    
+    location / {{
+        proxy_pass http://127.0.0.1:{self.config['system']['port']};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }}
+    
+    location /static {{
+        alias {self.project_root}/app/static;
+        expires 30d;
+    }}
+}}
+        """.strip()
+        
+        # Сохраняем конфигурацию
+        nginx_config_path = self.project_root / "config" / "nginx.conf"
+        with open(nginx_config_path, "w") as f:
+            f.write(nginx_config)
+        
+        self.print_info(f"Конфигурация Nginx сохранена в {nginx_config_path}")
+        self.print_warning("Не забудьте скопировать конфигурацию в /etc/nginx/sites-available/")
+    
+    def setup_systemd_service(self):
+        """Создание systemd сервиса"""
+        if self.config['system']['environment'] != 'production':
+            return
+        
+        self.print_header("СОЗДАНИЕ SYSTEMD СЕРВИСА")
+        
+        service_content = f"""
+[Unit]
+Description=Speech Analytics Web Application
+After=network.target
+
+[Service]
+Type=exec
+User=www-data
+Group=www-data
+WorkingDirectory={self.project_root}
+Environment=PATH={self.venv_path}/bin
+ExecStart={self.venv_path}/bin/gunicorn --workers 4 --bind {self.config['system']['host']}:{self.config['system']['port']} app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+        """.strip()
+        
+        service_path = self.project_root / "config" / "speech-analytics.service"
+        with open(service_path, "w") as f:
+            f.write(service_content)
+        
+        self.print_info(f"Systemd сервис сохранен в {service_path}")
+        self.print_warning("Скопируйте файл в /etc/systemd/system/ и выполните:")
+        self.print_warning("sudo systemctl daemon-reload")
+        self.print_warning("sudo systemctl enable speech-analytics")
+        self.print_warning("sudo systemctl start speech-analytics")
+    
+    def run_initial_setup(self):
+        """Выполнение первоначальной настройки приложения"""
+        self.print_header("ПЕРВОНАЧАЛЬНАЯ НАСТРОЙКА ПРИЛОЖЕНИЯ")
+        
+        if platform.system() == "Windows":
+            python_path = self.venv_path / "Scripts" / "python"
+        else:
+            python_path = self.venv_path / "bin" / "python"
+        
+        # Инициализация базы данных
+        self.print_info("Инициализация базы данных...")
+        setup_script = """
+import sys
+sys.path.append('.')
+
+from database_models import init_database, create_sample_data
+from flask import Flask
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = '{}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+init_database(app)
+
+with app.app_context():
+    create_sample_data()
+    print("✅ База данных инициализирована")
+        """.format(self.get_database_url())
+        
+        with open("temp_setup.py", "w") as f:
+            f.write(setup_script)
+        
+        try:
+            self.run_command(f"{python_path} temp_setup.py")
+        except:
+            self.print_warning("Не удалось автоматически инициализировать БД")
+        finally:
+            if os.path.exists("temp_setup.py"):
+                os.remove("temp_setup.py")
+        
+        # Загрузка данных NLTK
+        self.print_info("Загрузка данных NLTK...")
+        nltk_script = """
+import nltk
+import ssl
+
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('vader_lexicon')
+print("✅ Данные NLTK загружены")
+        """
+        
+        with open("temp_nltk.py", "w") as f:
+            f.write(nltk_script)
+        
+        try:
+            self.run_command(f"{python_path} temp_nltk.py")
+        except:
+            self.print_warning("Не удалось загрузить данные NLTK")
+        finally:
+            if os.path.exists("temp_nltk.py"):
+                os.remove("temp_nltk.py")
+        
+        self.print_success("Первоначальная настройка завершена")
+    
+    def test_installation(self):
+        """Тестирование установки"""
+        self.print_header("ТЕСТИРОВАНИЕ УСТАНОВКИ")
+        
+        # Запуск сервера в фоновом режиме для тестирования
+        if platform.system() == "Windows":
+            python_path = self.venv_path / "Scripts" / "python"
+        else:
+            python_path = self.venv_path / "bin" / "python"
+        
+        # Создаем простой тестовый сервер
+        test_server_script = """
+from flask import Flask, jsonify
+app = Flask(__name__)
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy", "message": "Speech Analytics API is running"})
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5555, debug=False)
+        """
+        
+        with open("test_server.py", "w") as f:
+            f.write(test_server_script)
+        
+        # Запускаем тестовый сервер
+        try:
+            self.print_info("Запуск тестового сервера...")
+            process = subprocess.Popen([str(python_path), "test_server.py"])
+            
+            # Ждем запуска сервера
+            time.sleep(3)
+            
+            # Тестируем доступность
+            try:
+                response = requests.get("http://127.0.0.1:5555/health", timeout=5)
+                if response.status_code == 200:
+                    self.print_success("Тестовый сервер отвечает")
+                    data = response.json()
+                    self.print_info(f"Ответ сервера: {data['message']}")
+                else:
+                    self.print_warning(f"Сервер вернул код {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                self.print_warning(f"Ошибка подключения к серверу: {e}")
+            
+            # Останавливаем тестовый сервер
+            process.terminate()
+            process.wait()
+            
+        except Exception as e:
+            self.print_error(f"Ошибка тестирования: {e}")
+        finally:
+            if os.path.exists("test_server.py"):
+                os.remove("test_server.py")
+        
+        self.print_success("Тестирование завершено")
+    
+    def create_startup_script(self):
+        """Создание скрипта запуска"""
+        self.print_header("СОЗДАНИЕ СКРИПТА ЗАПУСКА")
+        
+        if platform.system() == "Windows":
+            # Windows batch скрипт
+            script_content = f"""@echo off
+echo Starting Speech Analytics System...
+cd /d "{self.project_root}"
+call "{self.venv_path}\\Scripts\\activate.bat"
+python speech_analytics_server.py
+pause
+            """
+            script_path = self.project_root / "start.bat"
+        else:
+            # Unix shell скрипт
+            script_content = f"""#!/bin/bash
+echo "Starting Speech Analytics System..."
+cd "{self.project_root}"
+source "{self.venv_path}/bin/activate"
+python speech_analytics_server.py
+            """
+            script_path = self.project_root / "start.sh"
+        
+        with open(script_path, "w") as f:
+            f.write(script_content)
+        
+        if platform.system() != "Windows":
+            os.chmod(script_path, 0o755)
+        
+        self.print_success(f"Скрипт запуска создан: {script_path}")
+    
+    def full_deployment(self):
+        """Полное развертывание системы"""
+        try:
+            self.print_header("🚀 АВТОМАТИЗИРОВАННОЕ РАЗВЕРТЫВАНИЕ SPEECH ANALYTICS")
+            
+            # Этапы развертывания
+            self.check_system_requirements()
+            self.setup_python_environment()
+            self.create_project_structure() 
+            self.setup_database()
+            self.setup_redis()
+            self.setup_nginx()
+            self.setup_systemd_service()
+            self.run_initial_setup()
+            self.create_startup_script()
+            self.test_installation()
+            
+            # Финальные инструкции
+            self.print_header("🎉 РАЗВЕРТЫВАНИЕ ЗАВЕРШЕНО")
+            self.print_success("Система Speech Analytics успешно установлена!")
+            
+            print(f"\n{Colors.OKBLUE}📋 Следующие шаги:{Colors.ENDC}")
+            print(f"1. Проверьте настройки в файле .env")
+            print(f"2. Запустите систему: ./start.sh (Linux/Mac) или start.bat (Windows)")
+            print(f"3. Откройте браузер: http://localhost:{self.config['system']['port']}")
+            print(f"4. Для production: настройте Nginx и systemd")
+            
+            print(f"\n{Colors.OKBLUE}📁 Структура проекта:{Colors.ENDC}")
+            print(f"├── app/                 # Основное приложение")
+            print(f"├── config/              # Конфигурационные файлы")
+            print(f"├── logs/                # Файлы логов")
+            print(f"├── uploads/             # Загруженные файлы")
+            print(f"├── venv/                # Виртуальное окружение")
+            print(f"├── .env                 # Переменные окружения")
+            print(f"└── start.sh/start.bat   # Скрипт запуска")
+            
+            # Сохраняем конфигурацию
+            self.save_config()
+            
+        except KeyboardInterrupt:
+            self.print_warning("\n⏹️  Развертывание прервано пользователем")
+        except Exception as e:
+            self.print_error(f"\n💥 Критическая ошибка развертывания: {e}")
+            import traceback
+            traceback.print_exc()
+
+def main():
+    """Главная функция"""
+    parser = argparse.ArgumentParser(description="Speech Analytics Deployment Tool")
+    parser.add_argument("--config", help="Путь к файлу конфигурации")
+    parser.add_argument("--step", help="Выполнить только определенный шаг", 
+                       choices=['requirements', 'python', 'database', 'redis', 'nginx', 'test'])
+    parser.add_argument("--env", help="Окружение развертывания", 
+                       choices=['development', 'production'], default='development')
+    
+    args = parser.parse_args()
+    
+    # Создаем экземпляр деплойера
+    deployer = SpeechAnalyticsDeployer(args.config)
+    
+    # Устанавливаем окружение
+    deployer.config['system']['environment'] = args.env
+    
+    if args.step:
+        # Выполняем только определенный шаг
+        step_methods = {
+            'requirements': deployer.check_system_requirements,
+            'python': deployer.setup_python_environment,
+            'database': deployer.setup_database,
+            'redis': deployer.setup_redis,
+            'nginx': deployer.setup_nginx,
+            'test': deployer.test_installation
+        }
+        
+        if args.step in step_methods:
+            step_methods[args.step]()
+        else:
+            deployer.print_error(f"Неизвестный шаг: {args.step}")
+    else:
+        # Полное развертывание
+        deployer.full_deployment()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpeechAnalytics Pro - Платформа речевой аналитики</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            color: #4a5568;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .header p {
+            color: #718096;
+            font-size: 1.2em;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        .control-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .control-panel h3 {
+            color: #4a5568;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+        }
+        
+        .upload-area {
+            border: 2px dashed #cbd5e0;
+            border-radius: 15px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .upload-area:hover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+        
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .analysis-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+            color: #718096;
+        }
+        
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .transcript {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            line-height: 1.6;
+        }
+        
+        .keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .keyword {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .metric-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        }
+        
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .metric-label {
+            color: #718096;
+            margin-top: 10px;
+        }
+        
+        .sentiment-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-left: 10px;
+        }
+        
+        .sentiment-positive { background: #48bb78; }
+        .sentiment-neutral { background: #ed8936; }
+        .sentiment-negative { background: #f56565; }
+        
+        .progress-bar {
+            background: #e2e8f0;
+            border-radius: 10px;
+            height: 8px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        
+        .status {
+            padding: 10px 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+        
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .status.processing {
+            background: #bee3f8;
+            color: #2a4365;
+        }
+        
+        .audio-controls {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        
+        .waveform {
+            width: 100%;
+            height: 100px;
+            background: #e2e8f0;
+            border-radius: 10px;
+            margin: 10px 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .wave {
+            position: absolute;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            margin: 0 1px;
+            transition: height 0.1s ease;
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .metrics {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+        
+        .analysis-results {
+            background: #f8fafc;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .conversation-analysis {
+            margin-bottom: 20px;
+        }
+        
+        .speaker {
+            font-weight: bold;
+            color: #4a5568;
+        }
+        
+        .timestamp {
+            color: #718096;
+            font-size: 12px;
+        }
+        
+        .emotion-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        
+        .emotion-happy { background: #c6f6d5; color: #22543d; }
+        .emotion-neutral { background: #feebc8; color: #744210; }
+        .emotion-sad { background: #fed7d7; color: #742a2a; }
+        .emotion-angry { background: #fbb6ce; color: #702459; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎙️ SpeechAnalytics Pro</h1>
+            <p>Продвинутая платформа для анализа речи и разговоров</p>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric-card">
+                <div class="metric-value" id="totalCalls">0</div>
+                <div class="metric-label">Всего звонков</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="avgDuration">0:00</div>
+                <div class="metric-label">Средняя длительность</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="sentimentScore">0%</div>
+                <div class="metric-label">Позитивность</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="qualityScore">0%</div>
+                <div class="metric-label">Качество обслуживания</div>
+            </div>
+        </div>
+        
+        <div class="dashboard">
+            <div class="control-panel">
+                <h3>Управление</h3>
+                
+                <div class="upload-area" id="uploadArea">
+                    <div>📁 Перетащите аудио или видеофайл сюда</div>
+                    <div>Поддерживаемые форматы: MP4, AVI, MOV, MP3, WAV, FLAC и другие</div>
+                    <div>или</div>
+                    <button class="btn" onclick="document.getElementById('fileInput').click()">Выберите файл</button>
+                    <input type="file" id="fileInput" accept="audio/*,video/*" style="display: none;">
+                </div>
+                
+                <div class="audio-controls" id="audioControls" style="display: none;">
+                    <audio controls style="width: 100%; margin-bottom: 10px;"></audio>
+                    <div class="waveform" id="waveform"></div>
+                </div>
+                
+                <button class="btn" id="recordBtn">🎤 Начать запись</button>
+                <button class="btn" id="analyzeBtn" disabled>🔍 Анализировать</button>
+                <button class="btn" id="generateProtocolBtn" disabled>📋 Создать протокол</button>
+                <button class="btn" id="exportBtn" disabled>📊 Экспорт отчета</button>
+                
+                <div id="status"></div>
+                
+                <div style="margin-top: 20px;">
+                    <h4>Настройки анализа</h4>
+                    <label style="display: block; margin: 10px 0;">
+                        <input type="checkbox" id="emotionAnalysis" checked> Анализ эмоций
+                    </label>
+                    <label style="display: block; margin: 10px 0;">
+                        <input type="checkbox" id="keywordExtraction" checked> Извлечение ключевых слов
+                    </label>
+                    <label style="display: block; margin: 10px 0;">
+                        <input type="checkbox" id="qualityAssessment" checked> Оценка качества
+                    </label>
+                    <label style="display: block; margin: 10px 0;">
+                        <input type="checkbox" id="speakerDiarization" checked> Разделение говорящих
+                    </label>
+                </div>
+            </div>
+            
+            <div class="analysis-panel">
+                <div class="tabs">
+                    <div class="tab active" data-tab="transcript">Транскрипция</div>
+                    <div class="tab" data-tab="analytics">Аналитика</div>
+                    <div class="tab" data-tab="protocols">Протоколы</div>
+                    <div class="tab" data-tab="insights">Инсайты</div>
+                    <div class="tab" data-tab="reports">Отчеты</div>
+                </div>
+                
+                <div class="tab-content active" id="transcript">
+                    <div class="transcript" id="transcriptText">
+                        Загрузите аудиофайл для начала анализа...
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="transcriptProgress" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <div class="tab-content" id="analytics">
+                    <div class="analysis-results">
+                        <h4>Анализ разговора</h4>
+                        <div id="conversationAnalysis">
+                            <div class="conversation-analysis">
+                                <div class="speaker">Оператор <span class="timestamp">00:00</span> 
+                                    <span class="emotion-tag emotion-neutral">Нейтрально</span>
+                                </div>
+                                <div>Добро пожаловать в нашу компанию! Меня зовут Анна, чем могу помочь?</div>
+                            </div>
+                            <div class="conversation-analysis">
+                                <div class="speaker">Клиент <span class="timestamp">00:05</span>
+                                    <span class="emotion-tag emotion-happy">Позитивно</span>
+                                </div>
+                                <div>Здравствуйте! Хотел бы узнать о ваших услугах.</div>
+                            </div>
+                        </div>
+                        
+                        <h4>Ключевые слова</h4>
+                        <div class="keywords" id="keywordsList">
+                            <span class="keyword">услуги</span>
+                            <span class="keyword">цена</span>
+                            <span class="keyword">качество</span>
+                            <span class="keyword">доставка</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tab-content" id="protocols">
+                    <div class="analysis-results">
+                        <h4>Структурированные протоколы</h4>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <label for="protocolType" style="display: block; margin-bottom: 10px;">
+                                <strong>Тип протокола:</strong>
+                            </label>
+                            <select id="protocolType" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ccc;">
+                                <option value="detailed">Подробный протокол</option>
+                                <option value="executive">Управленческое резюме</option>
+                                <option value="tasks">Задачи и поручения</option>
+                                <option value="risks">Анализ рисков</option>
+                                <option value="technical">Техническое резюме</option>
+                                <option value="decisions">Принятые решения</option>
+                                <option value="custom">Произвольный анализ</option>
+                            </select>
+                        </div>
+                        
+                        <div id="customPromptArea" style="display: none; margin-bottom: 20px;">
+                            <label for="customPrompt" style="display: block; margin-bottom: 10px;">
+                                <strong>Ваш промпт для анализа:</strong>
+                            </label>
+                            <textarea id="customPrompt" rows="4" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ccc;" 
+                                      placeholder="Введите ваш промпт для анализа транскрипции..."></textarea>
+                        </div>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <button class="btn" id="generateSingleProtocol">📄 Создать протокол</button>
+                            <button class="btn" id="generateAllProtocols">📋 Все типы протоколов</button>
+                        </div>
+                        
+                        <div id="protocolResults" style="margin-top: 20px;">
+                            <p>Выберите тип протокола и нажмите "Создать протокол" для генерации</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="insights">
+                    <div class="analysis-results">
+                        <h4>Инсайты и рекомендации</h4>
+                        <div style="margin: 15px 0;">
+                            <strong>📈 Позитивные моменты:</strong>
+                            <ul style="margin-left: 20px; margin-top: 10px;">
+                                <li>Вежливое приветствие оператора</li>
+                                <li>Быстрый ответ на вопросы клиента</li>
+                                <li>Позитивная тональность разговора</li>
+                            </ul>
+                        </div>
+                        <div style="margin: 15px 0;">
+                            <strong>⚠️ Области для улучшения:</strong>
+                            <ul style="margin-left: 20px; margin-top: 10px;">
+                                <li>Можно более детально уточнить потребности клиента</li>
+                                <li>Стоит предложить дополнительные услуги</li>
+                            </ul>
+                        </div>
+                        <div style="margin: 15px 0;">
+                            <strong>🎯 Рекомендации:</strong>
+                            <ul style="margin-left: 20px; margin-top: 10px;">
+                                <li>Внедрить стандартные вопросы для выявления потребностей</li>
+                                <li>Обучить операторов техникам допродаж</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tab-content" id="reports">
+                    <div class="analysis-results">
+                        <h4>Отчет по качеству обслуживания</h4>
+                        <div style="margin: 15px 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+                                <span>Соблюдение скрипта:</span>
+                                <span style="color: #48bb78;">85%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 85%"></div>
+                            </div>
+                        </div>
+                        <div style="margin: 15px 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+                                <span>Эмоциональная окраска:</span>
+                                <span style="color: #48bb78;">Позитивная</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 78%"></div>
+                            </div>
+                        </div>
+                        <div style="margin: 15px 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+                                <span>Время ответа:</span>
+                                <span style="color: #ed8936;">Среднее</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 65%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class SpeechAnalytics {
+            constructor() {
+                this.currentAudio = null;
+                this.mediaRecorder = null;
+                this.isRecording = false;
+                this.recordedChunks = [];
+                this.currentTranscript = "";
+                this.analysisData = {
+                    totalCalls: 0,
+                    avgDuration: 0,
+                    sentimentScore: 0,
+                    qualityScore: 0
+                };
+                
+                this.initializeEventListeners();
+                this.createWaveform();
+            }
+            
+            initializeEventListeners() {
+                // Загрузка файлов
+                const fileInput = document.getElementById('fileInput');
+                const uploadArea = document.getElementById('uploadArea');
+                
+                fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+                
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+                
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+                
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.processFile(files[0]);
+                    }
+                });
+                
+                // Управление записью
+                document.getElementById('recordBtn').addEventListener('click', () => {
+                    this.toggleRecording();
+                });
+                
+                document.getElementById('analyzeBtn').addEventListener('click', () => {
+                    this.analyzeAudio();
+                });
+                
+                document.getElementById('exportBtn').addEventListener('click', () => {
+                    this.exportReport();
+                });
+                
+                // Протоколы
+                document.getElementById('generateSingleProtocol').addEventListener('click', () => {
+                    this.generateSingleProtocol();
+                });
+                
+                document.getElementById('generateAllProtocols').addEventListener('click', () => {
+                    this.generateAllProtocols();
+                });
+                
+                document.getElementById('protocolType').addEventListener('change', (e) => {
+                    this.toggleCustomPromptArea(e.target.value);
+                });
+                
+                // Вкладки
+                document.querySelectorAll('.tab').forEach(tab => {
+                    tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
+                });
+            }
+            
+            handleFileSelect(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    this.processFile(file);
+                }
+            }
+            
+            processFile(file) {
+                // Проверяем поддерживаемые форматы
+                const isAudio = file.type.startsWith('audio/');
+                const isVideo = file.type.startsWith('video/');
+                
+                if (!isAudio && !isVideo) {
+                    this.showStatus('Ошибка: Выберите аудио или видеофайл', 'error');
+                    return;
+                }
+                
+                this.showStatus('Загрузка файла...', 'processing');
+                
+                const url = URL.createObjectURL(file);
+                this.loadMedia(url, file.type);
+                
+                // Активируем кнопки
+                document.getElementById('analyzeBtn').disabled = false;
+                
+                this.showStatus('Файл загружен успешно', 'success');
+            }
+            
+            loadMedia(url, fileType) {
+                const audioControls = document.getElementById('audioControls');
+                const media = audioControls.querySelector('audio');
+                
+                // Для видеофайлов создаем video элемент
+                if (fileType.startsWith('video/')) {
+                    const videoElement = document.createElement('video');
+                    videoElement.controls = true;
+                    videoElement.style.width = '100%';
+                    videoElement.style.marginBottom = '10px';
+                    videoElement.src = url;
+                    
+                    // Заменяем audio на video
+                    media.parentNode.replaceChild(videoElement, media);
+                    this.currentAudio = videoElement;
+                } else {
+                    media.src = url;
+                    this.currentAudio = media;
+                }
+                
+                audioControls.style.display = 'block';
+                
+                this.currentAudio.addEventListener('loadedmetadata', () => {
+                    this.updateWaveform();
+                });
+            }
+            
+            async toggleRecording() {
+                const recordBtn = document.getElementById('recordBtn');
+                
+                if (!this.isRecording) {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        this.mediaRecorder = new MediaRecorder(stream);
+                        this.recordedChunks = [];
+                        
+                        this.mediaRecorder.ondataavailable = (e) => {
+                            if (e.data.size > 0) {
+                                this.recordedChunks.push(e.data);
+                            }
+                        };
+                        
+                        this.mediaRecorder.onstop = () => {
+                            const blob = new Blob(this.recordedChunks, { type: 'audio/wav' });
+                            const url = URL.createObjectURL(blob);
+                            this.loadAudio(url);
+                            document.getElementById('analyzeBtn').disabled = false;
+                        };
+                        
+                        this.mediaRecorder.start();
+                        this.isRecording = true;
+                        recordBtn.textContent = '⏹️ Остановить запись';
+                        recordBtn.style.background = '#f56565';
+                        this.showStatus('Идет запись...', 'processing');
+                        
+                    } catch (error) {
+                        this.showStatus('Ошибка доступа к микрофону', 'error');
+                    }
+                } else {
+                    this.mediaRecorder.stop();
+                    this.isRecording = false;
+                    recordBtn.textContent = '🎤 Начать запись';
+                    recordBtn.style.background = '';
+                    this.showStatus('Запись завершена', 'success');
+                    
+                    // Останавливаем поток
+                    this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                }
+            }
+            
+            analyzeAudio() {
+                this.showStatus('Анализ аудио...', 'processing');
+                
+                // Реальный анализ через API
+                this.performRealAnalysis();
+            }
+            
+            async performRealAnalysis() {
+                // Проверяем есть ли загруженный файл
+                const fileInput = document.getElementById('fileInput');
+                
+                if (!fileInput.files || fileInput.files.length === 0) {
+                    this.showStatus('Загрузите файл для анализа', 'error');
+                    return;
+                }
+                
+                const file = fileInput.files[0];
+                const formData = new FormData();
+                formData.append('media', file);  // Используем 'media' для совместимости с новым API
+                
+                try {
+                    const response = await fetch('/analyze', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Отображаем результаты
+                        this.displayAnalysisResults(result.results);
+                        this.showStatus('Анализ завершен', 'success');
+                    } else {
+                        this.showStatus(`Ошибка анализа: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    this.showStatus(`Ошибка: ${error.message}`, 'error');
+                }
+            }
+            
+            displayAnalysisResults(results) {
+                // Сохраняем транскрипцию для протоколов
+                this.currentTranscript = results.transcript;
+                
+                // Отображаем транскрипцию
+                const transcriptText = document.getElementById('transcriptText');
+                transcriptText.textContent = results.transcript;
+                
+                // Обновляем метрики
+                this.analysisData.totalCalls++;
+                this.analysisData.avgDuration = results.duration || 0;
+                this.analysisData.sentimentScore = Math.round((results.sentiment?.score || 0) * 100);
+                this.analysisData.qualityScore = results.quality?.score || 0;
+                
+                this.updateMetrics();
+                
+                // Активируем кнопки
+                document.getElementById('exportBtn').disabled = false;
+                document.getElementById('generateProtocolBtn').disabled = false;
+                
+                // Обновляем аналитические данные
+                this.updateAnalyticsTab(results);
+            }
+            
+            updateAnalyticsTab(results) {
+                // Обновляем анализ разговора
+                if (results.speakers && results.speakers.length > 0) {
+                    const conversationDiv = document.getElementById('conversationAnalysis');
+                    let html = '';
+                    
+                    results.speakers.forEach(speaker => {
+                        const emotion = this.getSentimentEmotion(results.sentiment?.sentiment);
+                        html += `
+                            <div class="conversation-analysis">
+                                <div class="speaker">${speaker.speaker} <span class="timestamp">${speaker.timestamp}</span> 
+                                    <span class="emotion-tag ${emotion.class}">${emotion.text}</span>
+                                </div>
+                                <div>${speaker.text}</div>
+                            </div>
+                        `;
+                    });
+                    
+                    conversationDiv.innerHTML = html;
+                }
+                
+                // Обновляем ключевые слова
+                if (results.keywords && results.keywords.length > 0) {
+                    const keywordsDiv = document.getElementById('keywordsList');
+                    keywordsDiv.innerHTML = '';
+                    
+                    results.keywords.forEach(keyword => {
+                        const span = document.createElement('span');
+                        span.className = 'keyword';
+                        span.textContent = keyword;
+                        keywordsDiv.appendChild(span);
+                    });
+                }
+            }
+            
+            getSentimentEmotion(sentiment) {
+                switch(sentiment) {
+                    case 'positive':
+                        return { class: 'emotion-happy', text: 'Позитивно' };
+                    case 'negative':
+                        return { class: 'emotion-sad', text: 'Негативно' };
+                    default:
+                        return { class: 'emotion-neutral', text: 'Нейтрально' };
+                }
+            }
+            
+            simulateAnalysis() {
+                const transcriptText = document.getElementById('transcriptText');
+                const progress = document.getElementById('transcriptProgress');
+                
+                // Имитация прогресса транскрипции
+                let progressValue = 0;
+                const progressInterval = setInterval(() => {
+                    progressValue += Math.random() * 15;
+                    if (progressValue >= 100) {
+                        progressValue = 100;
+                        clearInterval(progressInterval);
+                        this.completeAnalysis();
+                    }
+                    progress.style.width = progressValue + '%';
+                }, 200);
+                
+                // Постепенное появление текста
+                const sampleTranscript = `[00:00] Оператор: Добро пожаловать в нашу компанию! Меня зовут Анна, чем могу помочь?
+
+[00:05] Клиент: Здравствуйте! Хотел бы узнать о ваших услугах.
+
+[00:10] Оператор: Конечно! Мы предоставляем широкий спектр услуг. Что именно вас интересует?
+
+[00:15] Клиент: Меня интересует доставка товаров. Какие у вас есть варианты?
+
+[00:20] Оператор: У нас есть несколько вариантов доставки: экспресс-доставка в течение 2 часов, стандартная доставка на следующий день, и экономичная доставка в течение 3-5 дней.
+
+[00:35] Клиент: А какие цены на доставку?
+
+[00:38] Оператор: Экспресс-доставка стоит 500 рублей, стандартная - 200 рублей, экономичная - бесплатно при заказе от 2000 рублей.
+
+[00:50] Клиент: Отлично! Это именно то, что мне нужно. Спасибо за информацию!
+
+[00:55] Оператор: Пожалуйста! Есть ли еще вопросы? Могу помочь оформить заказ.
+
+[01:00] Клиент: Да, давайте оформим заказ.`;
+                
+                let currentLength = 0;
+                const typeInterval = setInterval(() => {
+                    currentLength += Math.random() * 50 + 20;
+                    if (currentLength >= sampleTranscript.length) {
+                        currentLength = sampleTranscript.length;
+                        clearInterval(typeInterval);
+                        // Сохраняем транскрипцию для протоколов
+                        this.currentTranscript = sampleTranscript;
+                    }
+                    transcriptText.textContent = sampleTranscript.substring(0, currentLength);
+                    transcriptText.scrollTop = transcriptText.scrollHeight;
+                }, 100);
+            }
+            
+            completeAnalysis() {
+                // Обновляем метрики
+                this.analysisData.totalCalls++;
+                this.analysisData.avgDuration = 62; // секунды
+                this.analysisData.sentimentScore = 85;
+                this.analysisData.qualityScore = 78;
+                
+                this.updateMetrics();
+                this.showStatus('Анализ завершен', 'success');
+                document.getElementById('exportBtn').disabled = false;
+                document.getElementById('generateProtocolBtn').disabled = false;
+                
+                // Генерируем ключевые слова
+                this.generateKeywords();
+                
+                // Обновляем анализ разговора
+                this.updateConversationAnalysis();
+            }
+            
+            updateMetrics() {
+                document.getElementById('totalCalls').textContent = this.analysisData.totalCalls;
+                document.getElementById('avgDuration').textContent = this.formatTime(this.analysisData.avgDuration);
+                document.getElementById('sentimentScore').textContent = this.analysisData.sentimentScore + '%';
+                document.getElementById('qualityScore').textContent = this.analysisData.qualityScore + '%';
+            }
+            
+            generateKeywords() {
+                const keywords = ['услуги', 'доставка', 'цена', 'заказ', 'помощь', 'информация', 'варианты', 'бесплатно'];
+                const keywordsList = document.getElementById('keywordsList');
+                keywordsList.innerHTML = '';
+                
+                keywords.forEach(keyword => {
+                    const span = document.createElement('span');
+                    span.className = 'keyword';
+                    span.textContent = keyword;
+                    keywordsList.appendChild(span);
+                });
+            }
+            
+            updateConversationAnalysis() {
+                const analysis = document.getElementById('conversationAnalysis');
+                analysis.innerHTML = `
+                    <div class="conversation-analysis">
+                        <div class="speaker">Оператор <span class="timestamp">00:00</span> 
+                            <span class="emotion-tag emotion-happy">Позитивно</span>
+                        </div>
+                        <div>Добро пожаловать в нашу компанию! Меня зовут Анна, чем могу помочь?</div>
+                    </div>
+                    <div class="conversation-analysis">
+                        <div class="speaker">Клиент <span class="timestamp">00:05</span>
+                            <span class="emotion-tag emotion-neutral">Нейтрально</span>
+                        </div>
+                        <div>Здравствуйте! Хотел бы узнать о ваших услугах.</div>
+                    </div>
+                    <div class="conversation-analysis">
+                        <div class="speaker">Оператор <span class="timestamp">00:10</span>
+                            <span class="emotion-tag emotion-happy">Позитивно</span>
+                        </div>
+                        <div>Конечно! Мы предоставляем широкий спектр услуг. Что именно вас интересует?</div>
+                    </div>
+                    <div class="conversation-analysis">
+                        <div class="speaker">Клиент <span class="timestamp">00:50</span>
+                            <span class="emotion-tag emotion-happy">Позитивно</span>
+                        </div>
+                        <div>Отлично! Это именно то, что мне нужно. Спасибо за информацию!</div>
+                    </div>
+                `;
+            }
+            
+            createWaveform() {
+                const waveform = document.getElementById('waveform');
+                for (let i = 0; i < 100; i++) {
+                    const wave = document.createElement('div');
+                    wave.className = 'wave';
+                    wave.style.height = Math.random() * 80 + 10 + 'px';
+                    wave.style.left = i * 3 + 'px';
+                    waveform.appendChild(wave);
+                }
+            }
+            
+            updateWaveform() {
+                const waves = document.querySelectorAll('.wave');
+                waves.forEach(wave => {
+                    wave.style.height = Math.random() * 80 + 10 + 'px';
+                });
+            }
+            
+            switchTab(tabName) {
+                // Убираем активный класс со всех вкладок
+                document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                
+                // Добавляем активный класс к выбранной вкладке
+                document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+                document.getElementById(tabName).classList.add('active');
+            }
+            
+            showStatus(message, type) {
+                const status = document.getElementById('status');
+                status.className = `status ${type}`;
+                status.textContent = message;
+                
+                if (type === 'success' || type === 'error') {
+                    setTimeout(() => {
+                        status.textContent = '';
+                        status.className = '';
+                    }, 3000);
+                }
+            }
+            
+            exportReport() {
+                const reportData = {
+                    timestamp: new Date().toISOString(),
+                    metrics: this.analysisData,
+                    transcript: document.getElementById('transcriptText').textContent,
+                    keywords: Array.from(document.querySelectorAll('.keyword')).map(k => k.textContent),
+                    analysis: 'Подробный анализ разговора с рекомендациями'
+                };
+                
+                const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `speech-analysis-report-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                this.showStatus('Отчет экспортирован', 'success');
+            }
+            
+            formatTime(seconds) {
+                const minutes = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                return `${minutes}:${secs.toString().padStart(2, '0')}`;
+            }
+            
+            toggleCustomPromptArea(protocolType) {
+                const customPromptArea = document.getElementById('customPromptArea');
+                if (protocolType === 'custom') {
+                    customPromptArea.style.display = 'block';
+                } else {
+                    customPromptArea.style.display = 'none';
+                }
+            }
+            
+            async generateSingleProtocol() {
+                const protocolType = document.getElementById('protocolType').value;
+                const customPrompt = document.getElementById('customPrompt').value;
+                
+                this.showStatus('Генерация протокола...', 'processing');
+                
+                try {
+                    const endpoint = protocolType === 'custom' ? '/analyze/custom' : '/generate/protocol';
+                    const payload = protocolType === 'custom' ? 
+                        { prompt: customPrompt } :
+                        { protocol_type: protocolType };
+                    
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.displayProtocol(result.protocol || result.analysis, protocolType);
+                        this.showStatus('Протокол создан', 'success');
+                    } else {
+                        this.showStatus(`Ошибка: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    this.showStatus(`Ошибка: ${error.message}`, 'error');
+                }
+            }
+            
+            async generateAllProtocols() {
+                this.showStatus('Генерация всех протоколов...', 'processing');
+                
+                try {
+                    const response = await fetch('/generate/all-protocols', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({})
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.displayAllProtocols(result.protocols);
+                        this.showStatus('Все протоколы созданы', 'success');
+                    } else {
+                        this.showStatus(`Ошибка: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    this.showStatus(`Ошибка: ${error.message}`, 'error');
+                }
+            }
+            
+            displayProtocol(protocol, type) {
+                const resultsDiv = document.getElementById('protocolResults');
+                
+                if (typeof protocol === 'string') {
+                    // Текстовый протокол
+                    resultsDiv.innerHTML = `
+                        <div style="background: #f8fafc; padding: 20px; border-radius: 10px; margin: 10px 0;">
+                            <h5>${this.getProtocolTypeName(type)}</h5>
+                            <pre style="white-space: pre-wrap; font-family: inherit;">${protocol}</pre>
+                        </div>
+                    `;
+                } else {
+                    // Структурированный протокол
+                    resultsDiv.innerHTML = this.formatStructuredProtocol(protocol, type);
+                }
+            }
+            
+            displayAllProtocols(protocols) {
+                const resultsDiv = document.getElementById('protocolResults');
+                let html = '<h5>Все типы протоколов:</h5>';
+                
+                for (const [type, protocol] of Object.entries(protocols)) {
+                    if (protocol) {
+                        html += `
+                            <div style="background: #f8fafc; padding: 15px; border-radius: 10px; margin: 10px 0; border-left: 4px solid #667eea;">
+                                <h6>${this.getProtocolTypeName(type)}</h6>
+                                ${typeof protocol === 'string' ? 
+                                    `<pre style="white-space: pre-wrap; font-family: inherit; font-size: 14px;">${protocol}</pre>` :
+                                    this.formatStructuredProtocol(protocol, type)
+                                }
+                            </div>
+                        `;
+                    }
+                }
+                
+                resultsDiv.innerHTML = html;
+            }
+            
+            formatStructuredProtocol(protocol, type) {
+                if (!protocol || typeof protocol === 'string') {
+                    return `<pre style="white-space: pre-wrap;">${protocol}</pre>`;
+                }
+                
+                let html = `<div style="font-size: 14px;">`;
+                
+                if (protocol.title) {
+                    html += `<h6>${protocol.title}</h6>`;
+                }
+                
+                if (protocol.summary) {
+                    html += `<p><strong>Резюме:</strong> ${protocol.summary}</p>`;
+                }
+                
+                if (protocol.main_points && protocol.main_points.length > 0) {
+                    html += `<p><strong>Основные пункты:</strong></p><ul>`;
+                    protocol.main_points.forEach(point => {
+                        html += `<li>${point}</li>`;
+                    });
+                    html += `</ul>`;
+                }
+                
+                if (protocol.decisions && protocol.decisions.length > 0) {
+                    html += `<p><strong>Решения:</strong></p><ul>`;
+                    protocol.decisions.forEach(decision => {
+                        html += `<li>${decision.decision || decision}`;
+                        if (decision.responsible) html += ` (Ответственный: ${decision.responsible})`;
+                        if (decision.deadline) html += ` (Срок: ${decision.deadline})`;
+                        html += `</li>`;
+                    });
+                    html += `</ul>`;
+                }
+                
+                if (protocol.action_items && protocol.action_items.length > 0) {
+                    html += `<p><strong>Задачи:</strong></p><ul>`;
+                    protocol.action_items.forEach(item => {
+                        html += `<li>${item.task || item}`;
+                        if (item.assignee) html += ` (${item.assignee})`;
+                        if (item.due_date) html += ` - до ${item.due_date}`;
+                        if (item.priority) html += ` [${item.priority}]`;
+                        html += `</li>`;
+                    });
+                    html += `</ul>`;
+                }
+                
+                if (protocol.next_steps && protocol.next_steps.length > 0) {
+                    html += `<p><strong>Следующие шаги:</strong></p><ul>`;
+                    protocol.next_steps.forEach(step => {
+                        html += `<li>${step}</li>`;
+                    });
+                    html += `</ul>`;
+                }
+                
+                if (protocol.content) {
+                    html += `<div style="margin-top: 15px;">${protocol.content}</div>`;
+                }
+                
+                html += `</div>`;
+                return html;
+            }
+            
+            getProtocolTypeName(type) {
+                const names = {
+                    'detailed': 'Подробный протокол',
+                    'executive': 'Управленческое резюме',
+                    'tasks': 'Задачи и поручения',
+                    'risks': 'Анализ рисков',
+                    'technical': 'Техническое резюме',
+                    'decisions': 'Принятые решения',
+                    'custom': 'Произвольный анализ'
+                };
+                return names[type] || type;
+            }
+        }
+        
+        // Инициализация приложения
+        document.addEventListener('DOMContentLoaded', () => {
+            new SpeechAnalytics();
+        });
+    </script>
+</body>
+</html>
