@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .api_probe import friendly_model_access_error, probe_model_access
 from .audio import list_input_devices, list_output_devices
 from .config import APP_NAME, LANGUAGES, DirectionConfig, load_api_key
 from .engine import DirectionEvents, TranslationDirection
@@ -213,10 +214,27 @@ class MainWindow(QMainWindow):
                 "Создайте live_interpreter/.env по образцу .env.example и укажите OPENAI_API_KEY.",
             )
             return
+
+        self.global_status.setText("● CHECKING API")
+        QApplication.processEvents()
+        probe = probe_model_access(api_key)
+        if probe.available is False:
+            self.global_status.setText("● API UNAVAILABLE")
+            QMessageBox.critical(
+                self,
+                "Модель перевода недоступна",
+                friendly_model_access_error(probe) + f"\n\nТехнически: {probe.display}",
+            )
+            return
+        if probe.available is None:
+            self.global_status.setText("● API CHECK UNKNOWN")
+            QApplication.processEvents()
+
         self._save_settings()
         remote_cfg = self._direction_config("remote", "Собеседник → Вы", self.remote_widgets)
         local_cfg = self._direction_config("local", "Вы → Собеседник", self.local_widgets)
         if not remote_cfg.enabled and not local_cfg.enabled:
+            self.global_status.setText("● READY")
             QMessageBox.warning(self, "Нет каналов", "Включите хотя бы одно направление перевода.")
             return
         self.start_btn.setEnabled(False)
@@ -257,6 +275,8 @@ class MainWindow(QMainWindow):
     def _on_status(self, key: str, status: str) -> None:
         w = self.remote_widgets if key == "remote" else self.local_widgets
         w.status.setText(status)
+        if status in {"error", "offline"}:
+            self.global_status.setText("● ERROR" if status == "error" else "● OFFLINE")
 
     @Slot(str, str)
     def _append_source(self, key: str, text: str) -> None:
