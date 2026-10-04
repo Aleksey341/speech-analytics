@@ -65,7 +65,10 @@ PIPER_VOICE_DEFAULTS = {
 
 def load_api_key() -> str:
     load_dotenv(ENV_PATH)
-    return os.getenv("OPENAI_API_KEY", "").strip()
+    value = os.getenv("OPENAI_API_KEY", "").strip()
+    if not value or value in {"sk-your-key-here", "your-api-key"}:
+        return ""
+    return value
 
 
 def local_asr_model() -> str:
