@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import queue
 import threading
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -68,12 +66,7 @@ def probe_local_engine(target_languages: tuple[str, ...] = ()) -> LocalEngineRep
 
 
 class SpeechSegmenter:
-    """Simple low-latency RMS segmenter for 24 kHz PCM16 chunks.
-
-    It preserves a small pre-roll, starts on speech energy, and emits after a
-    configurable silence tail or a hard maximum duration. This is deliberately
-    dependency-free so it can be unit-tested independently of ASR libraries.
-    """
+    """Dependency-free RMS segmenter for 24 kHz PCM16 streaming chunks."""
 
     def __init__(
         self,
@@ -161,6 +154,117 @@ class SpeechSegmenter:
         self._speech_count = 0
 
 
+class LocalModelBundle:
+    """One shared model bundle for both translation directions.
+
+    NLLB and Whisper are intentionally shared so bidirectional mode does not
+    duplicate several gigabytes of model memory. Inference is serialized to
+    avoid thread-safety surprises and to keep latency predictable on one GPU.
+    """
+
+    def __init__(self, on_status: Callable[[str], None]) -> None:
+        on_status("local-loading-asr")
+        from faster_whisper import WhisperModel
+
+        self.asr = WhisperModel(
+            local_asr_model(),
+            device=local_asr_device(),
+            compute_type=local_asr_compute_type(),
+        )
+
+        on_status("local-loading-translation")
+        import torch
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        self.torch = torch
+        model_name = local_translation_model()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        requested = local_translation_device().lower()
+        if requested == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = requested
+        self.translation_model.to(self.device)
+        self.translation_model.eval()
+        self.inference_lock = threading.RLock()
+        self.tts_lock = threading.RLock()
+        self.voices: dict[str, object] = {}
+
+    def transcribe(self, pcm24k: bytes) -> tuple[str, str]:
+        samples24 = pcm16_to_float(pcm24k).reshape(-1)
+        samples16 = resample_linear(samples24, INPUT_SAMPLE_RATE, ASR_SAMPLE_RATE).astype(np.float32, copy=False)
+        with self.inference_lock:
+            segments, info = self.asr.transcribe(
+                samples16,
+                beam_size=1,
+                vad_filter=False,
+                condition_on_previous_text=False,
+            )
+            text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
+            language = (getattr(info, "language", "") or "").lower()
+        return text, language
+
+    def translate(self, text: str, source_language: str, target_language: str) -> str:
+        if source_language == target_language:
+            return text
+        src = NLLB_LANGUAGE_CODES.get(source_language)
+        tgt = NLLB_LANGUAGE_CODES.get(target_language)
+        if not src or not tgt:
+            raise RuntimeError(
+                f"NLLB language mapping missing: source={source_language or 'unknown'}, target={target_language}"
+            )
+
+        with self.inference_lock:
+            self.tokenizer.src_lang = src
+            encoded = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+            encoded = {k: v.to(self.device) for k, v in encoded.items()}
+            forced_id = self.tokenizer.convert_tokens_to_ids(tgt)
+            with self.torch.inference_mode():
+                generated = self.translation_model.generate(
+                    **encoded,
+                    forced_bos_token_id=forced_id,
+                    max_new_tokens=256,
+                    num_beams=1,
+                )
+            return self.tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+
+    def synthesize_pcm24k(self, text: str, language: str) -> list[bytes]:
+        voice_path = local_piper_voice_path(language)
+        if voice_path is None or not voice_path.exists():
+            return []
+
+        from piper import PiperVoice
+
+        with self.tts_lock:
+            voice = self.voices.get(language)
+            if voice is None:
+                voice = PiperVoice.load(str(voice_path))
+                self.voices[language] = voice
+            result: list[bytes] = []
+            for chunk in voice.synthesize(text):
+                audio = np.asarray(chunk.audio_float_array, dtype=np.float32)
+                if audio.ndim > 1:
+                    audio = audio.mean(axis=1)
+                mono24 = resample_linear(audio.reshape(-1), int(chunk.sample_rate), INPUT_SAMPLE_RATE)
+                result.append(float_to_pcm16_mono(mono24))
+            return result
+
+
+_bundle: Optional[LocalModelBundle] = None
+_bundle_lock = threading.Lock()
+
+
+def get_local_model_bundle(on_status: Callable[[str], None]) -> LocalModelBundle:
+    global _bundle
+    if _bundle is not None:
+        return _bundle
+    with _bundle_lock:
+        if _bundle is None:
+            _bundle = LocalModelBundle(on_status)
+    return _bundle
+
+
 class LocalCascadeDirection:
     """Audio -> faster-whisper -> NLLB -> Piper -> selected output device."""
 
@@ -170,16 +274,10 @@ class LocalCascadeDirection:
         self.capture: Optional[AudioCapture] = None
         self.player: Optional[AudioPlayer] = None
         self._stop = threading.Event()
-        self._ready = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._segments: queue.Queue[bytes | None] = queue.Queue(maxsize=8)
         self._segmenter = SpeechSegmenter(self._enqueue_segment)
-        self._asr = None
-        self._translator_model = None
-        self._translator_tokenizer = None
-        self._translator_device = "cpu"
-        self._torch = None
-        self._voices: dict[str, object] = {}
+        self._bundle: Optional[LocalModelBundle] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -188,7 +286,6 @@ class LocalCascadeDirection:
         if not report.available:
             raise RuntimeError(report.detail)
         self._stop.clear()
-        self._ready.clear()
         self.events.on_status("local-loading")
         self._thread = threading.Thread(target=self._worker, name=f"local:{self.config.label}", daemon=True)
         self._thread.start()
@@ -216,7 +313,6 @@ class LocalCascadeDirection:
         try:
             self._segments.put_nowait(data)
         except queue.Full:
-            # Keep latency bounded: discard the oldest unprocessed utterance.
             try:
                 self._segments.get_nowait()
             except queue.Empty:
@@ -228,7 +324,7 @@ class LocalCascadeDirection:
 
     def _worker(self) -> None:
         try:
-            self._load_models()
+            self._bundle = get_local_model_bundle(self.events.on_status)
             if self._stop.is_set():
                 return
             self.player = AudioPlayer(self.config.output_device_name, self.events.on_error)
@@ -239,7 +335,6 @@ class LocalCascadeDirection:
                 on_error=self.events.on_error,
             )
             self.capture.start()
-            self._ready.set()
             self.events.on_status("local-online")
 
             while not self._stop.is_set():
@@ -251,105 +346,24 @@ class LocalCascadeDirection:
             if not self._stop.is_set():
                 self.events.on_status("error")
                 self.events.on_error(f"{self.config.label}: local engine error: {exc}")
-        finally:
-            self._ready.clear()
-
-    def _load_models(self) -> None:
-        self.events.on_status("local-loading-asr")
-        from faster_whisper import WhisperModel
-
-        self._asr = WhisperModel(
-            local_asr_model(),
-            device=local_asr_device(),
-            compute_type=local_asr_compute_type(),
-        )
-
-        self.events.on_status("local-loading-translation")
-        import torch
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
-        self._torch = torch
-        model_name = local_translation_model()
-        self._translator_tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self._translator_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-
-        requested = local_translation_device().lower()
-        if requested == "auto":
-            self._translator_device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self._translator_device = requested
-        self._translator_model.to(self._translator_device)
-        self._translator_model.eval()
 
     def _process_segment(self, pcm24k: bytes) -> None:
-        if self._asr is None:
+        if self._bundle is None:
             return
-        samples24 = pcm16_to_float(pcm24k).reshape(-1)
-        samples16 = resample_linear(samples24, INPUT_SAMPLE_RATE, ASR_SAMPLE_RATE).astype(np.float32, copy=False)
-        segments, info = self._asr.transcribe(
-            samples16,
-            beam_size=1,
-            vad_filter=False,
-            condition_on_previous_text=False,
-        )
-        source = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
+        source, source_language = self._bundle.transcribe(pcm24k)
         if not source:
             return
-        source_language = (getattr(info, "language", "") or "").lower()
         self.events.on_source_text(source + "\n")
 
-        target = self._translate(source, source_language, self.config.target_language)
+        target = self._bundle.translate(source, source_language, self.config.target_language)
         if not target:
             return
         self.events.on_target_text(target + "\n")
-        self._speak(target, self.config.target_language)
 
-    def _translate(self, text: str, source_language: str, target_language: str) -> str:
-        if source_language == target_language:
-            return text
-        src = NLLB_LANGUAGE_CODES.get(source_language)
-        tgt = NLLB_LANGUAGE_CODES.get(target_language)
-        if not src or not tgt:
-            raise RuntimeError(
-                f"NLLB language mapping missing: source={source_language or 'unknown'}, target={target_language}"
-            )
-        tokenizer = self._translator_tokenizer
-        model = self._translator_model
-        torch = self._torch
-        if tokenizer is None or model is None or torch is None:
-            return ""
-
-        tokenizer.src_lang = src
-        encoded = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-        encoded = {k: v.to(self._translator_device) for k, v in encoded.items()}
-        forced_id = tokenizer.convert_tokens_to_ids(tgt)
-        with torch.inference_mode():
-            generated = model.generate(
-                **encoded,
-                forced_bos_token_id=forced_id,
-                max_new_tokens=256,
-                num_beams=1,
-            )
-        return tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
-
-    def _speak(self, text: str, language: str) -> None:
-        if not self.player:
-            return
-        voice_path = local_piper_voice_path(language)
-        if voice_path is None or not voice_path.exists():
+        chunks = self._bundle.synthesize_pcm24k(target, self.config.target_language)
+        if not chunks:
             self.events.on_status("local-text-only")
             return
-
-        from piper import PiperVoice
-
-        voice = self._voices.get(language)
-        if voice is None:
-            voice = PiperVoice.load(str(voice_path))
-            self._voices[language] = voice
-
-        for chunk in voice.synthesize(text):
-            audio = np.asarray(chunk.audio_float_array, dtype=np.float32)
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            mono24 = resample_linear(audio.reshape(-1), int(chunk.sample_rate), INPUT_SAMPLE_RATE)
-            self.player.enqueue_pcm24k(float_to_pcm16_mono(mono24))
+        if self.player:
+            for chunk in chunks:
+                self.player.enqueue_pcm24k(chunk)
