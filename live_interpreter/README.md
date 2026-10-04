@@ -50,6 +50,8 @@ Diagnostics:
 .\diagnose.ps1
 ```
 
+Diagnostics now checks both Windows audio devices and whether the API project behind `OPENAI_API_KEY` can resolve `gpt-realtime-translate`.
+
 Start:
 
 ```powershell
@@ -62,11 +64,23 @@ Start with a single direction:
 
 - `Собеседник -> Вы`: enabled
 - `Вы -> Собеседник`: disabled
-- input: a virtual cable receiving the call's speaker output
-- output: physical headphones
-- target: Russian
+- input: the loopback of the Windows output device that receives the call audio;
+- output: physical headphones or another isolated output;
+- target: Russian.
 
 Once this works without echo/feedback, configure the reverse direction using a second virtual cable.
+
+## Troubleshooting `model_not_found`
+
+If Realtime closes with `invalid_request_error.model_not_found`:
+
+1. Pull the latest version and run `diagnose.ps1`.
+2. Check the `MODEL ACCESS` line.
+3. The endpoint and model name used by the app are the documented values: `/v1/realtime/translations?model=gpt-realtime-translate`.
+4. If the model probe returns 404 / `model_not_found`, the API project associated with the key cannot currently use the model. Check the OpenAI API organization/project Limits and Model Usage settings.
+5. `gpt-realtime-translate` is not supported on the Free API usage tier. A ChatGPT subscription or ChatGPT/Codex credit balance is separate from API billing.
+
+The GUI performs the same model-access preflight before opening the audio streams and will show a specific message instead of reporting a false `ONLINE` state.
 
 ## Cost note
 
