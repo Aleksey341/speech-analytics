@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import os
 
 from dotenv import load_dotenv
@@ -12,6 +13,7 @@ INPUT_SAMPLE_RATE = 24_000
 DEVICE_SAMPLE_RATE = 48_000
 BLOCK_MS = 20
 BLOCK_FRAMES_48K = DEVICE_SAMPLE_RATE * BLOCK_MS // 1000
+ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 
 LANGUAGES = {
     "Русский": "ru",
@@ -30,7 +32,7 @@ LANGUAGES = {
 
 
 def load_api_key() -> str:
-    load_dotenv()
+    load_dotenv(ENV_PATH)
     value = os.getenv("OPENAI_API_KEY", "").strip()
     return value
 
