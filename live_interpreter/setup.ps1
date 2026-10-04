@@ -25,10 +25,11 @@ Invoke-Expression "$python -m venv .venv"
 
 if (-not (Test-Path .env)) {
     Copy-Item .env.example .env
-    Write-Host 'Created .env. Add your OPENAI_API_KEY before first run.' -ForegroundColor Yellow
+    Write-Host 'Created .env. OPENAI_API_KEY is optional when using Local/Auto fallback.' -ForegroundColor Yellow
 }
 
 Write-Host ''
-Write-Host 'Installation complete.' -ForegroundColor Green
-Write-Host 'Run diagnostics: .\diagnose.ps1'
-Write-Host 'Start app:       .\run.ps1'
+Write-Host 'Base installation complete.' -ForegroundColor Green
+Write-Host 'Optional Local engine: .\setup-local.ps1'
+Write-Host 'Run diagnostics:       .\diagnose.ps1'
+Write-Host 'Start app:             .\run.ps1'

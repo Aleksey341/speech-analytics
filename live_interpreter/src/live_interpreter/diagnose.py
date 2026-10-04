@@ -3,6 +3,7 @@ from __future__ import annotations
 from .api_probe import friendly_model_access_error, probe_model_access
 from .audio import list_input_devices, list_output_devices
 from .config import MODEL, load_api_key
+from .local_engine import probe_local_engine
 
 
 def main() -> int:
@@ -18,6 +19,10 @@ def main() -> int:
             print(f"MODEL ACCESS DETAIL: {friendly_model_access_error(probe)}")
         elif probe.available is None:
             print("MODEL ACCESS DETAIL: preflight inconclusive; WebSocket may still be attempted")
+
+    local = probe_local_engine(("ru", "en"))
+    print(f"LOCAL ENGINE: {'AVAILABLE' if local.available else 'UNAVAILABLE'}")
+    print(f"LOCAL ENGINE DETAIL: {local.detail}")
 
     print("\nINPUT DEVICES:")
     for i, d in enumerate(list_input_devices()):

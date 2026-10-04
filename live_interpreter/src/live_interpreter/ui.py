@@ -25,8 +25,9 @@ from PySide6.QtWidgets import (
 
 from .api_probe import friendly_model_access_error, probe_model_access
 from .audio import list_input_devices, list_output_devices
-from .config import APP_NAME, LANGUAGES, DirectionConfig, load_api_key
+from .config import APP_NAME, ENGINE_MODES, LANGUAGES, DirectionConfig, load_api_key
 from .engine import DirectionEvents, TranslationDirection
+from .local_engine import probe_local_engine
 
 
 class UiBus(QObject):
@@ -51,7 +52,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("LiveInterpreter")
-        self.resize(1180, 760)
+        self.resize(1180, 790)
         self.settings = QSettings("Aleksey341", APP_NAME)
         self.bus = UiBus()
         self.bus.status.connect(self._on_status)
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
         self.bus.error.connect(self._show_error)
         self._remote_direction: TranslationDirection | None = None
         self._local_direction: TranslationDirection | None = None
+        self._resolved_engine = ""
 
         self._inputs = list_input_devices()
         self._outputs = list_output_devices()
@@ -75,15 +77,24 @@ class MainWindow(QMainWindow):
         title_row = QHBoxLayout()
         title = QLabel("LIVE INTERPRETER")
         title.setStyleSheet("font-size: 22px; font-weight: 800;")
+        self.engine_combo = QComboBox()
+        for label, value in ENGINE_MODES.items():
+            self.engine_combo.addItem(label, value)
+        self.engine_combo.setToolTip(
+            "Авто: использовать OpenAI Realtime, если модель доступна; иначе переключиться на локальный каскад."
+        )
         self.global_status = QLabel("● READY")
         self.global_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         title_row.addWidget(title)
         title_row.addStretch(1)
+        title_row.addWidget(QLabel("Движок"))
+        title_row.addWidget(self.engine_combo)
         title_row.addWidget(self.global_status)
         layout.addLayout(title_row)
 
         hint = QLabel(
-            "Два независимых канала перевода. Источник языка определяется автоматически, вы выбираете только язык перевода."
+            "OpenAI Realtime даёт минимальную задержку. Локальный каскад работает без API: "
+            "faster-whisper → NLLB → Piper. В режиме Авто приложение само выбирает доступный движок."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -118,7 +129,10 @@ class MainWindow(QMainWindow):
         splitter.setSizes([580, 580])
         layout.addWidget(splitter, 1)
 
-        privacy = QLabel("По умолчанию приложение не сохраняет аудио и текст разговора на диск.")
+        privacy = QLabel(
+            "По умолчанию приложение не сохраняет аудио и текст разговора на диск. "
+            "Local работает на компьютере; OpenAI отправляет аудио в Realtime API."
+        )
         privacy.setStyleSheet("color:#777;")
         layout.addWidget(privacy)
         self.setCentralWidget(root)
@@ -144,7 +158,15 @@ class MainWindow(QMainWindow):
         form.addRow("Выход", output_combo)
         form.addRow("Переводить на", lang_combo)
         form.addRow("Статус", status)
-        widgets = DirectionWidgets(enabled, input_combo, output_combo, lang_combo, status, QPlainTextEdit(), QPlainTextEdit())
+        widgets = DirectionWidgets(
+            enabled,
+            input_combo,
+            output_combo,
+            lang_combo,
+            status,
+            QPlainTextEdit(),
+            QPlainTextEdit(),
+        )
         return box, widgets
 
     def _transcript_box(self, title: str, widgets: DirectionWidgets) -> QWidget:
@@ -187,13 +209,14 @@ class MainWindow(QMainWindow):
             self._fill_input_combo(widgets.input_device)
             self._fill_output_combo(widgets.output_device)
 
-    def _direction_config(self, key: str, label: str, w: DirectionWidgets) -> DirectionConfig:
+    def _direction_config(self, label: str, w: DirectionWidgets, engine: str) -> DirectionConfig:
         return DirectionConfig(
             enabled=w.enabled.isChecked(),
             input_device_name=str(w.input_device.currentData() or ""),
             output_device_name=str(w.output_device.currentData() or ""),
             target_language=LANGUAGES[w.target_language.currentText()],
             label=label,
+            engine=engine,
         )
 
     def _events(self, key: str) -> DirectionEvents:
@@ -204,43 +227,78 @@ class MainWindow(QMainWindow):
             on_error=lambda e: self.bus.error.emit(e),
         )
 
+    def _enabled_target_languages(self) -> tuple[str, ...]:
+        result: list[str] = []
+        for widgets in (self.remote_widgets, self.local_widgets):
+            if widgets.enabled.isChecked():
+                result.append(LANGUAGES[widgets.target_language.currentText()])
+        return tuple(result)
+
+    def _resolve_engine(self) -> tuple[str | None, str]:
+        requested = str(self.engine_combo.currentData() or "auto")
+        api_key = load_api_key()
+
+        if requested == "openai":
+            if not api_key:
+                return None, "Для OpenAI Realtime нужен OPENAI_API_KEY в live_interpreter/.env."
+            self.global_status.setText("● CHECKING OPENAI")
+            QApplication.processEvents()
+            probe = probe_model_access(api_key)
+            if probe.available is False:
+                return None, friendly_model_access_error(probe) + f"\n\nТехнически: {probe.display}"
+            return "openai", "OpenAI Realtime"
+
+        local_report = probe_local_engine(self._enabled_target_languages())
+        if requested == "local":
+            if not local_report.available:
+                return None, local_report.detail
+            return "local", local_report.detail
+
+        # Auto: OpenAI first when a key exists and the model is actually available.
+        openai_detail = "OPENAI_API_KEY не задан"
+        if api_key:
+            self.global_status.setText("● AUTO · CHECKING OPENAI")
+            QApplication.processEvents()
+            probe = probe_model_access(api_key)
+            if probe.available is True:
+                return "openai", "Auto выбрал OpenAI Realtime."
+            openai_detail = friendly_model_access_error(probe) if probe.available is False else probe.display
+
+        if local_report.available:
+            return "local", "Auto переключился на Local. " + local_report.detail
+
+        return None, (
+            "Автоматический выбор не нашёл рабочего движка.\n\n"
+            f"OpenAI: {openai_detail}\n"
+            f"Local: {local_report.detail}"
+        )
+
     @Slot()
     def start_translation(self) -> None:
-        api_key = load_api_key()
-        if not api_key:
-            QMessageBox.critical(
-                self,
-                "OPENAI_API_KEY не найден",
-                "Создайте live_interpreter/.env по образцу .env.example и укажите OPENAI_API_KEY.",
-            )
-            return
-
-        self.global_status.setText("● CHECKING API")
-        QApplication.processEvents()
-        probe = probe_model_access(api_key)
-        if probe.available is False:
-            self.global_status.setText("● API UNAVAILABLE")
-            QMessageBox.critical(
-                self,
-                "Модель перевода недоступна",
-                friendly_model_access_error(probe) + f"\n\nТехнически: {probe.display}",
-            )
-            return
-        if probe.available is None:
-            self.global_status.setText("● API CHECK UNKNOWN")
-            QApplication.processEvents()
-
         self._save_settings()
-        remote_cfg = self._direction_config("remote", "Собеседник → Вы", self.remote_widgets)
-        local_cfg = self._direction_config("local", "Вы → Собеседник", self.local_widgets)
-        if not remote_cfg.enabled and not local_cfg.enabled:
-            self.global_status.setText("● READY")
+        if not self.remote_widgets.enabled.isChecked() and not self.local_widgets.enabled.isChecked():
             QMessageBox.warning(self, "Нет каналов", "Включите хотя бы одно направление перевода.")
             return
+
+        resolved_engine, detail = self._resolve_engine()
+        if not resolved_engine:
+            self.global_status.setText("● ENGINE UNAVAILABLE")
+            QMessageBox.critical(self, "Движок перевода недоступен", detail)
+            return
+
+        self._resolved_engine = resolved_engine
+        if self.engine_combo.currentData() == "auto" and resolved_engine == "local":
+            QMessageBox.information(self, "Auto → Local", detail)
+
+        remote_cfg = self._direction_config("Собеседник → Вы", self.remote_widgets, resolved_engine)
+        local_cfg = self._direction_config("Вы → Собеседник", self.local_widgets, resolved_engine)
+        api_key = load_api_key() if resolved_engine == "openai" else ""
+
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.refresh_btn.setEnabled(False)
-        self.global_status.setText("● CONNECTING")
+        self.engine_combo.setEnabled(False)
+        self.global_status.setText("● CONNECTING" if resolved_engine == "openai" else "● LOCAL · LOADING")
         QApplication.processEvents()
         try:
             if remote_cfg.enabled:
@@ -249,7 +307,8 @@ class MainWindow(QMainWindow):
             if local_cfg.enabled:
                 self._local_direction = TranslationDirection(api_key, local_cfg, self._events("local"))
                 self._local_direction.start()
-            self.global_status.setText("● ONLINE")
+            if resolved_engine == "openai":
+                self.global_status.setText("● ONLINE · OPENAI")
         except Exception as exc:
             self._show_error(str(exc))
             self.stop_translation()
@@ -266,16 +325,29 @@ class MainWindow(QMainWindow):
                     self.bus.error.emit(str(exc))
         self._remote_direction = None
         self._local_direction = None
+        self._resolved_engine = ""
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.refresh_btn.setEnabled(True)
+        self.engine_combo.setEnabled(True)
         self.global_status.setText("● READY")
 
     @Slot(str, str)
     def _on_status(self, key: str, status: str) -> None:
         w = self.remote_widgets if key == "remote" else self.local_widgets
-        w.status.setText(status)
-        if status in {"error", "offline"}:
+        labels = {
+            "local-loading": "local: загрузка",
+            "local-loading-asr": "local: Whisper",
+            "local-loading-translation": "local: NLLB",
+            "local-online": "local: online",
+            "local-text-only": "local: только текст",
+        }
+        w.status.setText(labels.get(status, status))
+        if status == "local-online":
+            self.global_status.setText("● ONLINE · LOCAL")
+        elif status == "local-text-only":
+            self.global_status.setText("● LOCAL · TEXT ONLY")
+        elif status in {"error", "offline"}:
             self.global_status.setText("● ERROR" if status == "error" else "● OFFLINE")
 
     @Slot(str, str)
@@ -301,6 +373,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "LiveInterpreter", message)
 
     def _save_settings(self) -> None:
+        self.settings.setValue("engine", self.engine_combo.currentData() or "auto")
         for prefix, w in (("remote", self.remote_widgets), ("local", self.local_widgets)):
             self.settings.setValue(f"{prefix}/enabled", w.enabled.isChecked())
             self.settings.setValue(f"{prefix}/input", w.input_device.currentData() or "")
@@ -308,6 +381,10 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"{prefix}/language", w.target_language.currentText())
 
     def _restore_settings(self) -> None:
+        engine = self.settings.value("engine", "auto")
+        i = self.engine_combo.findData(engine)
+        if i >= 0:
+            self.engine_combo.setCurrentIndex(i)
         for prefix, w in (("remote", self.remote_widgets), ("local", self.local_widgets)):
             w.enabled.setChecked(self.settings.value(f"{prefix}/enabled", True, bool))
             input_name = self.settings.value(f"{prefix}/input", "")
