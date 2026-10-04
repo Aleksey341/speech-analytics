@@ -45,9 +45,11 @@ class TranslationDirection:
         )
         self.session = TranslationSession(self.api_key, self.config.target_language, callbacks)
         self.session.start()
-        if not self.session.wait_until_open(timeout=8.0):
+        if not self.session.wait_until_ready(timeout=8.0):
+            detail = self.session.failure_message or "OpenAI Realtime session did not become ready within 8 seconds"
             self.stop()
-            raise RuntimeError(f"{self.config.label}: OpenAI Realtime connection timeout")
+            raise RuntimeError(f"{self.config.label}: {detail}")
+
         self.capture = AudioCapture(
             self.config.input_device_name,
             on_pcm24k=self.session.send_pcm24k,
