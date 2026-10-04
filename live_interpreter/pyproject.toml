@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "live-interpreter"
+version = "0.1.0"
+description = "Windows realtime bidirectional speech translator using OpenAI Realtime Translation"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "numpy>=2.1,<3",
+  "PySide6>=6.8,<7",
+  "python-dotenv>=1.0,<2",
+  "SoundCard>=0.4.4,<0.5",
+  "websocket-client>=1.8,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9"]
+
+[project.scripts]
+live-interpreter = "live_interpreter.ui:run"
+live-interpreter-diagnose = "live_interpreter.diagnose:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
