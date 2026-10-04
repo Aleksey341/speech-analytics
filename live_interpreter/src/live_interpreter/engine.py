@@ -16,7 +16,7 @@ class DirectionEvents:
     on_error: Callable[[str], None]
 
 
-class TranslationDirection:
+class OpenAITranslationDirection:
     def __init__(self, api_key: str, config: DirectionConfig, events: DirectionEvents) -> None:
         self.api_key = api_key
         self.config = config
@@ -26,14 +26,8 @@ class TranslationDirection:
         self.session: Optional[TranslationSession] = None
 
     def start(self) -> None:
-        if not self.config.enabled:
-            self.events.on_status("disabled")
-            return
-        if not self.config.input_device_name:
-            raise RuntimeError(f"{self.config.label}: input device is not selected")
-        if not self.config.output_device_name:
-            raise RuntimeError(f"{self.config.label}: output device is not selected")
-
+        if not self.api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for OpenAI Realtime mode")
         self.player = AudioPlayer(self.config.output_device_name, self.events.on_error)
         self.player.start()
         callbacks = SessionCallbacks(
@@ -67,3 +61,37 @@ class TranslationDirection:
         if self.player:
             self.player.stop()
             self.player = None
+
+
+class TranslationDirection:
+    """Thin engine selector used by the UI for one translation direction."""
+
+    def __init__(self, api_key: str, config: DirectionConfig, events: DirectionEvents) -> None:
+        self.api_key = api_key
+        self.config = config
+        self.events = events
+        self._impl = None
+
+    def start(self) -> None:
+        if not self.config.enabled:
+            self.events.on_status("disabled")
+            return
+        if not self.config.input_device_name:
+            raise RuntimeError(f"{self.config.label}: input device is not selected")
+        if not self.config.output_device_name:
+            raise RuntimeError(f"{self.config.label}: output device is not selected")
+
+        if self.config.engine == "local":
+            from .local_engine import LocalCascadeDirection
+
+            self._impl = LocalCascadeDirection(self.config, self.events)
+        elif self.config.engine == "openai":
+            self._impl = OpenAITranslationDirection(self.api_key, self.config, self.events)
+        else:
+            raise RuntimeError(f"Unsupported engine: {self.config.engine}")
+        self._impl.start()
+
+    def stop(self) -> None:
+        if self._impl:
+            self._impl.stop()
+            self._impl = None
