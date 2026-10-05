@@ -37,13 +37,32 @@ Write-Host 'Updating pip ...' -ForegroundColor Cyan
 & $VoicePython -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed.' }
 
+$HasNvidia = $null -ne (Get-Command nvidia-smi -ErrorAction SilentlyContinue)
+if ($HasNvidia) {
+    Write-Host 'NVIDIA detected. Installing PyTorch 2.6 CUDA 12.4 wheels ...' -ForegroundColor Cyan
+    & $VoicePython -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+} else {
+    Write-Host 'NVIDIA not detected. Installing PyTorch 2.6 CPU wheels ...' -ForegroundColor Cyan
+    & $VoicePython -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+}
+if ($LASTEXITCODE -ne 0) { throw 'PyTorch installation failed.' }
+
 Write-Host 'Installing Chatterbox Multilingual voice cloning ...' -ForegroundColor Cyan
 & $VoicePython -m pip install 'chatterbox-tts==0.1.7'
 if ($LASTEXITCODE -ne 0) { throw 'Chatterbox installation failed.' }
 
 Write-Host ''
-Write-Host 'Checking Chatterbox import ...' -ForegroundColor Cyan
-& $VoicePython -c "from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('CHATTERBOX_IMPORT=OK')"
+Write-Host 'Checking Chatterbox and Torch ...' -ForegroundColor Cyan
+$check = @'
+import torch
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+print("CHATTERBOX_IMPORT=OK")
+print("TORCH=" + torch.__version__)
+print("CUDA_AVAILABLE=" + str(torch.cuda.is_available()))
+if torch.cuda.is_available():
+    print("CUDA_DEVICE=" + torch.cuda.get_device_name(0))
+'@
+& $VoicePython -c $check
 if ($LASTEXITCODE -ne 0) { throw 'Chatterbox import failed.' }
 
 if (-not $SkipModelDownload) {
