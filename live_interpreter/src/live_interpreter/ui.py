@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sys
+import threading
 
 from PySide6.QtCore import QObject, QSettings, Signal, Slot, Qt
 from PySide6.QtGui import QTextCursor
@@ -24,10 +25,19 @@ from PySide6.QtWidgets import (
 )
 
 from .api_probe import friendly_model_access_error, probe_model_access
-from .audio import list_input_devices, list_output_devices
-from .config import APP_NAME, ENGINE_MODES, LANGUAGES, DirectionConfig, load_api_key
+from .audio import list_input_devices, list_output_devices, record_voice_reference
+from .config import (
+    APP_NAME,
+    ENGINE_MODES,
+    LANGUAGES,
+    VOICE_MODES,
+    DirectionConfig,
+    load_api_key,
+    voice_clone_profile_path,
+)
 from .engine import DirectionEvents, TranslationDirection
 from .local_engine import probe_local_engine
+from .voice_clone import probe_voice_clone
 
 
 class UiBus(QObject):
@@ -35,6 +45,8 @@ class UiBus(QObject):
     source_text = Signal(str, str)
     target_text = Signal(str, str)
     error = Signal(str)
+    voice_profile_done = Signal(str)
+    voice_profile_error = Signal(str)
 
 
 @dataclass(slots=True)
@@ -43,6 +55,7 @@ class DirectionWidgets:
     input_device: QComboBox
     output_device: QComboBox
     target_language: QComboBox
+    voice_mode: QComboBox
     status: QLabel
     source_text: QPlainTextEdit
     target_text: QPlainTextEdit
@@ -52,13 +65,15 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("LiveInterpreter")
-        self.resize(1180, 790)
+        self.resize(1180, 820)
         self.settings = QSettings("Aleksey341", APP_NAME)
         self.bus = UiBus()
         self.bus.status.connect(self._on_status)
         self.bus.source_text.connect(self._append_source)
         self.bus.target_text.connect(self._append_target)
         self.bus.error.connect(self._show_error)
+        self.bus.voice_profile_done.connect(self._on_voice_profile_done)
+        self.bus.voice_profile_error.connect(self._on_voice_profile_error)
         self._remote_direction: TranslationDirection | None = None
         self._local_direction: TranslationDirection | None = None
         self._resolved_engine = ""
@@ -81,7 +96,8 @@ class MainWindow(QMainWindow):
         for label, value in ENGINE_MODES.items():
             self.engine_combo.addItem(label, value)
         self.engine_combo.setToolTip(
-            "Авто: использовать OpenAI Realtime, если модель доступна; иначе переключиться на локальный каскад."
+            "Авто: использовать OpenAI Realtime, если модель доступна; иначе переключиться на локальный каскад. "
+            "Если выбран «Мой голос», Auto использует локальный каскад."
         )
         self.global_status = QLabel("● READY")
         self.global_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -93,8 +109,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(title_row)
 
         hint = QLabel(
-            "OpenAI Realtime даёт минимальную задержку. Локальный каскад работает без API: "
-            "faster-whisper → NLLB → Piper. В режиме Авто приложение само выбирает доступный движок."
+            "OpenAI Realtime даёт минимальную задержку. Локальный каскад: faster-whisper → NLLB → TTS. "
+            "Режим «Мой голос» использует локальный Chatterbox и ваш 15-секундный образец голоса."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -112,12 +128,15 @@ class MainWindow(QMainWindow):
         buttons = QHBoxLayout()
         self.refresh_btn = QPushButton("Обновить устройства")
         self.refresh_btn.clicked.connect(self._refresh_devices)
+        self.record_voice_btn = QPushButton("🎙 Записать мой голос (15 с)")
+        self.record_voice_btn.clicked.connect(self._record_voice_profile)
         self.start_btn = QPushButton("▶ Начать перевод")
         self.start_btn.clicked.connect(self.start_translation)
         self.stop_btn = QPushButton("■ Остановить")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_translation)
         buttons.addWidget(self.refresh_btn)
+        buttons.addWidget(self.record_voice_btn)
         buttons.addStretch(1)
         buttons.addWidget(self.stop_btn)
         buttons.addWidget(self.start_btn)
@@ -130,10 +149,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(splitter, 1)
 
         privacy = QLabel(
-            "По умолчанию приложение не сохраняет аудио и текст разговора на диск. "
-            "Local работает на компьютере; OpenAI отправляет аудио в Realtime API."
+            "Аудио разговора и текст по умолчанию не сохраняются. Образец «Мой голос» сохраняется только локально "
+            "в live_interpreter\\voice_profiles и не попадает в Git."
         )
         privacy.setStyleSheet("color:#777;")
+        privacy.setWordWrap(True)
         layout.addWidget(privacy)
         self.setCentralWidget(root)
 
@@ -149,6 +169,12 @@ class MainWindow(QMainWindow):
         idx = lang_combo.findText(default_lang_name)
         if idx >= 0:
             lang_combo.setCurrentIndex(idx)
+        voice_combo = QComboBox()
+        for label, value in VOICE_MODES.items():
+            voice_combo.addItem(label, value)
+        voice_combo.setToolTip(
+            "Стандартный: Piper/OpenAI. Мой голос: локальное клонирование Chatterbox. Только текст: без озвучки."
+        )
         status = QLabel("ready")
         status.setStyleSheet("font-weight:700;")
         self._fill_input_combo(input_combo)
@@ -157,12 +183,14 @@ class MainWindow(QMainWindow):
         form.addRow("Вход", input_combo)
         form.addRow("Выход", output_combo)
         form.addRow("Переводить на", lang_combo)
+        form.addRow("Голос", voice_combo)
         form.addRow("Статус", status)
         widgets = DirectionWidgets(
             enabled,
             input_combo,
             output_combo,
             lang_combo,
+            voice_combo,
             status,
             QPlainTextEdit(),
             QPlainTextEdit(),
@@ -217,6 +245,8 @@ class MainWindow(QMainWindow):
             target_language=LANGUAGES[w.target_language.currentText()],
             label=label,
             engine=engine,
+            voice_mode=str(w.voice_mode.currentData() or "standard"),
+            voice_profile_path=str(voice_clone_profile_path()),
         )
 
     def _events(self, key: str) -> DirectionEvents:
@@ -234,9 +264,29 @@ class MainWindow(QMainWindow):
                 result.append(LANGUAGES[widgets.target_language.currentText()])
         return tuple(result)
 
+    def _clone_requests(self) -> list[tuple[DirectionWidgets, str]]:
+        result: list[tuple[DirectionWidgets, str]] = []
+        for widgets in (self.remote_widgets, self.local_widgets):
+            if widgets.enabled.isChecked() and widgets.voice_mode.currentData() == "clone":
+                result.append((widgets, LANGUAGES[widgets.target_language.currentText()]))
+        return result
+
     def _resolve_engine(self) -> tuple[str | None, str]:
         requested = str(self.engine_combo.currentData() or "auto")
         api_key = load_api_key()
+        clone_requests = self._clone_requests()
+        local_report = probe_local_engine(self._enabled_target_languages())
+
+        if clone_requests:
+            if requested == "openai":
+                return None, "Режим «Мой голос» работает через локальный каскад. Выберите «Авто» или «Локальный каскад»."
+            if not local_report.available:
+                return None, local_report.detail
+            for _widgets, language in clone_requests:
+                clone = probe_voice_clone(require_profile=True, target_language=language)
+                if not clone.available:
+                    return None, clone.detail
+            return "local", "Для режима «Мой голос» выбран Local + Chatterbox."
 
         if requested == "openai":
             if not api_key:
@@ -248,13 +298,11 @@ class MainWindow(QMainWindow):
                 return None, friendly_model_access_error(probe) + f"\n\nТехнически: {probe.display}"
             return "openai", "OpenAI Realtime"
 
-        local_report = probe_local_engine(self._enabled_target_languages())
         if requested == "local":
             if not local_report.available:
                 return None, local_report.detail
             return "local", local_report.detail
 
-        # Auto: OpenAI first when a key exists and the model is actually available.
         openai_detail = "OPENAI_API_KEY не задан"
         if api_key:
             self.global_status.setText("● AUTO · CHECKING OPENAI")
@@ -272,6 +320,57 @@ class MainWindow(QMainWindow):
             f"OpenAI: {openai_detail}\n"
             f"Local: {local_report.detail}"
         )
+
+    @Slot()
+    def _record_voice_profile(self) -> None:
+        if self._remote_direction or self._local_direction:
+            QMessageBox.warning(self, "Остановите перевод", "Сначала остановите активный перевод.")
+            return
+        device_name = str(self.local_widgets.input_device.currentData() or "")
+        if not device_name:
+            QMessageBox.warning(self, "Микрофон не выбран", "Выберите микрофон в блоке «Вы → Собеседник».")
+            return
+
+        QMessageBox.information(
+            self,
+            "Запись голоса",
+            "После нажатия OK говорите обычным голосом 15 секунд.\n\n"
+            "Лучше произнести 2–3 спокойных предложения без музыки и постороннего шума.",
+        )
+        self.record_voice_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.global_status.setText("● RECORDING VOICE · 15 s")
+        threading.Thread(
+            target=self._record_voice_profile_worker,
+            args=(device_name,),
+            name="voice-profile-recorder",
+            daemon=True,
+        ).start()
+
+    def _record_voice_profile_worker(self, device_name: str) -> None:
+        try:
+            path = record_voice_reference(device_name, voice_clone_profile_path(), duration_seconds=15)
+            self.bus.voice_profile_done.emit(str(path))
+        except Exception as exc:
+            self.bus.voice_profile_error.emit(str(exc))
+
+    @Slot(str)
+    def _on_voice_profile_done(self, path: str) -> None:
+        self.record_voice_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
+        self.global_status.setText("● VOICE PROFILE READY")
+        QMessageBox.information(
+            self,
+            "Голос записан",
+            f"Профиль сохранён локально:\n{path}\n\nТеперь выберите «Мой голос» в направлении «Вы → Собеседник».",
+        )
+
+    @Slot(str)
+    def _on_voice_profile_error(self, message: str) -> None:
+        self.record_voice_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
+        self.global_status.setText("● READY")
+        QMessageBox.critical(self, "Не удалось записать голос", message)
 
     @Slot()
     def start_translation(self) -> None:
@@ -297,6 +396,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.refresh_btn.setEnabled(False)
+        self.record_voice_btn.setEnabled(False)
         self.engine_combo.setEnabled(False)
         self.global_status.setText("● CONNECTING" if resolved_engine == "openai" else "● LOCAL · LOADING")
         QApplication.processEvents()
@@ -329,6 +429,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.refresh_btn.setEnabled(True)
+        self.record_voice_btn.setEnabled(True)
         self.engine_combo.setEnabled(True)
         self.global_status.setText("● READY")
 
@@ -341,10 +442,13 @@ class MainWindow(QMainWindow):
             "local-loading-translation": "local: NLLB",
             "local-online": "local: online",
             "local-text-only": "local: только текст",
+            "local-cloning": "local: мой голос",
         }
         w.status.setText(labels.get(status, status))
         if status == "local-online":
             self.global_status.setText("● ONLINE · LOCAL")
+        elif status == "local-cloning":
+            self.global_status.setText("● LOCAL · VOICE CLONE")
         elif status == "local-text-only":
             self.global_status.setText("● LOCAL · TEXT ONLY")
         elif status in {"error", "offline"}:
@@ -379,6 +483,7 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"{prefix}/input", w.input_device.currentData() or "")
             self.settings.setValue(f"{prefix}/output", w.output_device.currentData() or "")
             self.settings.setValue(f"{prefix}/language", w.target_language.currentText())
+            self.settings.setValue(f"{prefix}/voice_mode", w.voice_mode.currentData() or "standard")
 
     def _restore_settings(self) -> None:
         engine = self.settings.value("engine", "auto")
@@ -390,6 +495,7 @@ class MainWindow(QMainWindow):
             input_name = self.settings.value(f"{prefix}/input", "")
             output_name = self.settings.value(f"{prefix}/output", "")
             lang = self.settings.value(f"{prefix}/language", w.target_language.currentText())
+            voice_mode = self.settings.value(f"{prefix}/voice_mode", "standard")
             i = w.input_device.findData(input_name)
             if i >= 0:
                 w.input_device.setCurrentIndex(i)
@@ -399,6 +505,9 @@ class MainWindow(QMainWindow):
             i = w.target_language.findText(lang)
             if i >= 0:
                 w.target_language.setCurrentIndex(i)
+            i = w.voice_mode.findData(voice_mode)
+            if i >= 0:
+                w.voice_mode.setCurrentIndex(i)
 
     def closeEvent(self, event) -> None:
         self._save_settings()
