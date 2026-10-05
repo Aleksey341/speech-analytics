@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import queue
 import threading
+import wave
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 import soundcard as sc
@@ -69,6 +71,33 @@ def _find_speaker(name: str):
     if partial:
         return partial[0]
     raise RuntimeError(f"Output audio device not found: {name}")
+
+
+def record_voice_reference(device_name: str, path: Path, duration_seconds: int = 15) -> Path:
+    if not device_name:
+        raise RuntimeError("Voice profile input device is not selected")
+    if duration_seconds < 5:
+        raise ValueError("Voice reference must be at least 5 seconds")
+
+    mic = _find_microphone(device_name)
+    total_frames = DEVICE_SAMPLE_RATE * duration_seconds
+    captured = 0
+    pcm_parts: list[bytes] = []
+    with mic.recorder(samplerate=DEVICE_SAMPLE_RATE, channels=None, blocksize=BLOCK_FRAMES_48K) as recorder:
+        while captured < total_frames:
+            count = min(BLOCK_FRAMES_48K, total_frames - captured)
+            frames = recorder.record(numframes=count)
+            mono24 = resample_linear(frames, DEVICE_SAMPLE_RATE, INPUT_SAMPLE_RATE)
+            pcm_parts.append(float_to_pcm16_mono(mono24))
+            captured += count
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(INPUT_SAMPLE_RATE)
+        wav.writeframes(b"".join(pcm_parts))
+    return path
 
 
 class AudioCapture:
