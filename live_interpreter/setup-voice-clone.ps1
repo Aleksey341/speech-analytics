@@ -37,7 +37,18 @@ Write-Host 'Updating pip ...' -ForegroundColor Cyan
 & $VoicePython -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed.' }
 
-$HasNvidia = $null -ne (Get-Command nvidia-smi -ErrorAction SilentlyContinue)
+$HasNvidia = $false
+if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+    $HasNvidia = $true
+} else {
+    try {
+        $HasNvidia = @(
+            Get-CimInstance Win32_VideoController -ErrorAction Stop |
+                Where-Object { $_.Name -match 'NVIDIA' }
+        ).Count -gt 0
+    } catch {}
+}
+
 if ($HasNvidia) {
     Write-Host 'NVIDIA detected. Installing PyTorch 2.6 CUDA 12.4 wheels ...' -ForegroundColor Cyan
     & $VoicePython -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
