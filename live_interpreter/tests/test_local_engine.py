@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from live_interpreter.config import INPUT_SAMPLE_RATE, NLLB_LANGUAGE_CODES
+from live_interpreter.config import CHATTERBOX_LANGUAGES, INPUT_SAMPLE_RATE, LANGUAGES, NLLB_LANGUAGE_CODES
 from live_interpreter.dsp import float_to_pcm16_mono, pcm16_to_float
 from live_interpreter.local_engine import SpeechSegmenter
 
@@ -53,3 +53,7 @@ def test_segmenter_ignores_short_noise() -> None:
 def test_primary_language_maps_exist() -> None:
     assert NLLB_LANGUAGE_CODES["ru"] == "rus_Cyrl"
     assert NLLB_LANGUAGE_CODES["en"] == "eng_Latn"
+
+
+def test_all_ui_languages_can_use_chatterbox_clone() -> None:
+    assert set(LANGUAGES.values()) <= CHATTERBOX_LANGUAGES
