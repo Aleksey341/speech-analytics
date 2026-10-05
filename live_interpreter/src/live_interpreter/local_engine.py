@@ -5,6 +5,7 @@ import queue
 import threading
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -20,8 +21,10 @@ from .config import (
     local_piper_voice_path,
     local_translation_device,
     local_translation_model,
+    voice_clone_profile_path,
 )
 from .dsp import float_to_pcm16_mono, pcm16_to_float, resample_linear
+from .voice_clone import get_voice_clone_client, probe_voice_clone
 
 ASR_SAMPLE_RATE = 16_000
 
@@ -58,7 +61,7 @@ def probe_local_engine(target_languages: tuple[str, ...] = ()) -> LocalEngineRep
     if absent_voices:
         return LocalEngineReport(
             True,
-            "Локальный перевод доступен; голос для части направлений не найден, поэтому там будут только субтитры: "
+            "Локальный перевод доступен; стандартный голос для части направлений не найден, поэтому там будут только субтитры: "
             + "; ".join(absent_voices),
         )
 
@@ -155,12 +158,7 @@ class SpeechSegmenter:
 
 
 class LocalModelBundle:
-    """One shared model bundle for both translation directions.
-
-    NLLB and Whisper are intentionally shared so bidirectional mode does not
-    duplicate several gigabytes of model memory. Inference is serialized to
-    avoid thread-safety surprises and to keep latency predictable on one GPU.
-    """
+    """One shared model bundle for both translation directions."""
 
     def __init__(self, on_status: Callable[[str], None]) -> None:
         on_status("local-loading-asr")
@@ -229,7 +227,22 @@ class LocalModelBundle:
                 )
             return self.tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
 
-    def synthesize_pcm24k(self, text: str, language: str) -> list[bytes]:
+    def synthesize_pcm24k(
+        self,
+        text: str,
+        language: str,
+        voice_mode: str,
+        voice_profile: str = "",
+    ) -> list[bytes]:
+        if voice_mode == "text":
+            return []
+        if voice_mode == "clone":
+            profile = Path(voice_profile) if voice_profile else voice_clone_profile_path()
+            report = probe_voice_clone(require_profile=True, target_language=language)
+            if not report.available:
+                raise RuntimeError(report.detail)
+            return get_voice_clone_client().synthesize_pcm24k(text, language, profile)
+
         voice_path = local_piper_voice_path(language)
         if voice_path is None or not voice_path.exists():
             return []
@@ -266,7 +279,7 @@ def get_local_model_bundle(on_status: Callable[[str], None]) -> LocalModelBundle
 
 
 class LocalCascadeDirection:
-    """Audio -> faster-whisper -> NLLB -> Piper -> selected output device."""
+    """Audio -> faster-whisper -> NLLB -> Piper/Chatterbox -> selected output."""
 
     def __init__(self, config: DirectionConfig, events) -> None:
         self.config = config
@@ -285,6 +298,10 @@ class LocalCascadeDirection:
         report = probe_local_engine((self.config.target_language,))
         if not report.available:
             raise RuntimeError(report.detail)
+        if self.config.voice_mode == "clone":
+            clone = probe_voice_clone(require_profile=True, target_language=self.config.target_language)
+            if not clone.available:
+                raise RuntimeError(clone.detail)
         self._stop.clear()
         self.events.on_status("local-loading")
         self._thread = threading.Thread(target=self._worker, name=f"local:{self.config.label}", daemon=True)
@@ -327,8 +344,9 @@ class LocalCascadeDirection:
             self._bundle = get_local_model_bundle(self.events.on_status)
             if self._stop.is_set():
                 return
-            self.player = AudioPlayer(self.config.output_device_name, self.events.on_error)
-            self.player.start()
+            if self.config.voice_mode != "text":
+                self.player = AudioPlayer(self.config.output_device_name, self.events.on_error)
+                self.player.start()
             self.capture = AudioCapture(
                 self.config.input_device_name,
                 on_pcm24k=self._segmenter.push,
@@ -360,10 +378,18 @@ class LocalCascadeDirection:
             return
         self.events.on_target_text(target + "\n")
 
-        chunks = self._bundle.synthesize_pcm24k(target, self.config.target_language)
+        if self.config.voice_mode == "clone":
+            self.events.on_status("local-cloning")
+        chunks = self._bundle.synthesize_pcm24k(
+            target,
+            self.config.target_language,
+            self.config.voice_mode,
+            self.config.voice_profile_path,
+        )
         if not chunks:
             self.events.on_status("local-text-only")
             return
         if self.player:
             for chunk in chunks:
                 self.player.enqueue_pcm24k(chunk)
+        self.events.on_status("local-online")
