@@ -28,11 +28,19 @@ class OpenAITranslationDirection:
     def start(self) -> None:
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required for OpenAI Realtime mode")
-        self.player = AudioPlayer(self.config.output_device_name, self.events.on_error)
-        self.player.start()
+        if self.config.voice_mode == "clone":
+            raise RuntimeError("Режим «Мой голос» сейчас работает только с локальным каскадом.")
+
+        if self.config.voice_mode != "text":
+            self.player = AudioPlayer(self.config.output_device_name, self.events.on_error)
+            self.player.start()
+            on_audio = self.player.enqueue_pcm24k
+        else:
+            on_audio = lambda _data: None
+
         callbacks = SessionCallbacks(
             on_status=self.events.on_status,
-            on_audio=self.player.enqueue_pcm24k,
+            on_audio=on_audio,
             on_source_transcript=self.events.on_source_text,
             on_target_transcript=self.events.on_target_text,
             on_error=self.events.on_error,
@@ -78,7 +86,7 @@ class TranslationDirection:
             return
         if not self.config.input_device_name:
             raise RuntimeError(f"{self.config.label}: input device is not selected")
-        if not self.config.output_device_name:
+        if self.config.voice_mode != "text" and not self.config.output_device_name:
             raise RuntimeError(f"{self.config.label}: output device is not selected")
 
         if self.config.engine == "local":

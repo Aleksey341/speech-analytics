@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "live-interpreter"
-version = "0.2.0"
-description = "Windows realtime bidirectional speech translator with OpenAI Realtime and local fallback"
+version = "0.3.0"
+description = "Windows realtime bidirectional speech translator with OpenAI Realtime, local fallback, and optional local voice cloning"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "numpy>=2.1,<3",

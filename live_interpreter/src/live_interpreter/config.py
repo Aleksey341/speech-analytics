@@ -17,11 +17,21 @@ ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 APP_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_MODELS_DIR = APP_ROOT / "models"
 LOCAL_PIPER_DIR = LOCAL_MODELS_DIR / "piper"
+VOICE_PROFILES_DIR = APP_ROOT / "voice_profiles"
+MY_VOICE_PROFILE = VOICE_PROFILES_DIR / "my_voice.wav"
+VOICE_VENV_DIR = APP_ROOT / ".voice-venv"
+VOICE_WORKER_PATH = APP_ROOT / "voice_clone_worker.py"
 
 ENGINE_MODES = {
     "Авто": "auto",
     "OpenAI Realtime": "openai",
     "Локальный каскад": "local",
+}
+
+VOICE_MODES = {
+    "Стандартный": "standard",
+    "Мой голос": "clone",
+    "Только текст": "text",
 }
 
 LANGUAGES = {
@@ -37,6 +47,12 @@ LANGUAGES = {
     "中文": "zh",
     "日本語": "ja",
     "한국어": "ko",
+}
+
+# Chatterbox Multilingual supports all target languages currently exposed by
+# LiveInterpreter. Keep this explicit so unsupported additions fail clearly.
+CHATTERBOX_LANGUAGES = {
+    "ru", "en", "de", "fr", "es", "it", "pt", "pl", "tr", "zh", "ja", "ko"
 }
 
 # FLORES-200 language tags used by NLLB.
@@ -106,6 +122,17 @@ def local_piper_voice_path(language: str) -> Path | None:
     return LOCAL_PIPER_DIR / f"{voice}.onnx"
 
 
+def voice_clone_device() -> str:
+    return os.getenv("LIVEINTERPRETER_VOICE_DEVICE", "auto").strip() or "auto"
+
+
+def voice_clone_profile_path() -> Path:
+    override = os.getenv("LIVEINTERPRETER_VOICE_PROFILE", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return MY_VOICE_PROFILE
+
+
 @dataclass(slots=True)
 class DirectionConfig:
     enabled: bool
@@ -114,6 +141,8 @@ class DirectionConfig:
     target_language: str
     label: str
     engine: str = "openai"
+    voice_mode: str = "standard"
+    voice_profile_path: str = ""
 
 
 @dataclass(slots=True)
